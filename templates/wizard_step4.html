@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Step 4: Preview{% endblock %}
+{% block head %}
+<style>
+  .sched-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="wizard-steps">
+  <div class="wizard-step done">1. New Joiners</div>
+  <div class="wizard-step done">2. Leavers</div>
+  <div class="wizard-step done">3. Leave Requests</div>
+  <div class="wizard-step active">4. Preview & Generate</div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <h5 class="mb-0"><i class="bi bi-table"></i> Preview – {{ month_name }} {{ result.year }}</h5>
+    <span class="badge bg-light text-dark">{{ result.days_in_month }} days</span>
+  </div>
+  <div class="card-body p-2">
+
+    <!-- Warnings & cancelled leaves -->
+    {% if result.cancelled_leaves %}
+    <div class="alert alert-danger py-2 mb-2">
+      <strong><i class="bi bi-x-circle"></i> Cancelled Leaves ({{ result.cancelled_leaves|length }}):</strong>
+      <ul class="mb-0 mt-1">
+        {% for cl in result.cancelled_leaves %}
+        <li>
+          <strong>{{ cl.emp_name }}</strong> – Day {{ cl.day }} (Shift {{ cl.shift }})
+          <br><small class="text-muted">Reason: {{ cl.reason }}</small>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if result.warnings %}
+    <div class="alert alert-warning py-2 mb-2">
+      <strong><i class="bi bi-exclamation-triangle"></i> Warnings ({{ result.warnings|length }}):</strong>
+      <ul class="mb-0 mt-1">
+        {% for w in result.warnings %}
+        <li>{{ w }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if not result.warnings and not result.cancelled_leaves %}
+    <div class="alert alert-success py-2 mb-2">
+      <i class="bi bi-check-circle"></i> All constraints satisfied! No leaves cancelled.
+    </div>
+    {% endif %}
+
+    <!-- Schedule table -->
+    <div class="sched-wrap">
+      {% set days = range(1, result.days_in_month + 1) %}
+      <table class="table table-bordered sched-table mb-0">
+        <thead>
+          <tr>
+            <th class="sticky-col">Emp ID</th>
+            <th class="sticky-col2">Name</th>
+            {% for day in days %}
+            <th class="{% if result.year and result.month %}
+                        {% set wd = day_name_fn(result.year, result.month, day) %}
+                        {% if wd == 'Sun' %}cell-sun{% endif %}{% endif %}">
+              {{ day }}<br>
+              <small>{{ day_name_fn(result.year, result.month, day) }}</small>
+            </th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for role in role_order %}
+            {% set role_emps = [] %}
+            {% for eid, info in result.meta.items() %}
+              {% if info.role == role %}{% do role_emps.append((eid, info)) %}{% endif %}
+            {% endfor %}
+            {% if role_emps %}
+            <tr class="row-section">
+              <td colspan="{{ result.days_in_month + 2 }}">{{ role }}</td>
+            </tr>
+            {% for eid, info in role_emps %}
+            <tr>
+              <td class="sticky-col text-muted small">{{ eid }}</td>
+              <td class="sticky-col2 name-col">{{ info.name }}</td>
+              {% for day in days %}
+                {% set val = result.employee_schedules.get(eid, {}).get(day|string, '') %}
+                <td class="cell-{{ val }} {% if day_name_fn(result.year, result.month, day) == 'Sun' %}cell-sun{% endif %}">
+                  {{ val }}
+                </td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+            {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Summary counts -->
+    <div class="table-responsive mt-2">
+      <table class="table table-sm table-bordered sched-table">
+        <thead class="table-dark">
+          <tr>
+            <th colspan="2">Shift Count</th>
+            {% for day in days %}<th>{{ day }}</th>{% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for shift_label, shift_key in [('First','1'),('Second','2'),('Third','3'),('W/Off','W')] %}
+          <tr>
+            <td colspan="2" class="fw-semibold cell-{{ shift_key }}">{{ shift_label }}</td>
+            {% for day in days %}
+              {% set count = namespace(n=0) %}
+              {% for eid in result.employee_schedules %}
+                {% if result.employee_schedules[eid].get(day|string) == shift_key %}
+                  {% set count.n = count.n + 1 %}
+                {% endif %}
+              {% endfor %}
+              <td>{{ count.n }}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card-footer d-flex justify-content-between">
+    <form method="post">
+      <input type="hidden" name="action" value="back"/>
+      <button type="submit" class="btn btn-outline-secondary">← Back to Leaves</button>
+    </form>
+    <form method="post">
+      <input type="hidden" name="action" value="confirm"/>
+      <button type="submit" class="btn btn-success btn-lg">
+        <i class="bi bi-check-circle"></i> Confirm & Save Schedule
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- Legend -->
+<div class="d-flex flex-wrap gap-2 mb-3">
+  <span class="badge badge-shift1 px-3 py-2">1 – Morning</span>
+  <span class="badge badge-shift2 px-3 py-2">2 – Afternoon</span>
+  <span class="badge badge-shift3 px-3 py-2">3 – Night</span>
+  <span class="badge badge-woff px-3 py-2">W – Weekly Off</span>
+  <span class="badge badge-leave px-3 py-2">L – Leave</span>
+</div>
+{% endblock %}

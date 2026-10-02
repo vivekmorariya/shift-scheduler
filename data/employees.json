@@ -1,0 +1,74 @@
+{
+  "Engineers": [
+    {
+      "id": "785669",
+      "name": "Krishna Kumar"
+    },
+    {
+      "id": "723586",
+      "name": "Dhavalkumar Kantilal Patel"
+    },
+    {
+      "id": "879685",
+      "name": "Vivek Morariya"
+    }
+  ],
+  "Operators": [
+    {
+      "id": "774084",
+      "name": "Anil Kumar Singh"
+    },
+    {
+      "id": "799868",
+      "name": "Krishnadas Bhattacharjee"
+    },
+    {
+      "id": "828701",
+      "name": "Nikesh Soda Parmar"
+    },
+    {
+      "id": "725338",
+      "name": "Kantibhai Bhavabhai Thakor"
+    },
+    {
+      "id": "725387",
+      "name": "Jignesh Navinchandra Nayak"
+    }
+  ],
+  "Technicians": [
+    {
+      "id": "725545",
+      "name": "Bharatkumar Nanjibhai Chavda"
+    },
+    {
+      "id": "830084",
+      "name": "Vishnu"
+    },
+    {
+      "id": "725000",
+      "name": "Kishorkumar Lavjibhai Zala"
+    },
+    {
+      "id": "725317",
+      "name": "Rajesh Pallia"
+    },
+    {
+      "id": "830908",
+      "name": "Mehul Chauhan"
+    }
+  ],
+  "Apprentices": [
+    {
+      "id": "890521",
+      "name": "Anilbhai Thakor"
+    },
+    {
+      "id": "890520",
+      "name": "Vanshraj Makwana"
+    },
+    {
+      "id": "890519",
+      "name": "Harsh Zala"
+    }
+  ]
+}

@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}Step 3: Leave Requests{% endblock %}
+{% block content %}
+<div class="wizard-steps">
+  <div class="wizard-step done">1. New Joiners</div>
+  <div class="wizard-step done">2. Leavers</div>
+  <div class="wizard-step active">3. Leave Requests</div>
+  <div class="wizard-step">4. Preview & Generate</div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h5 class="mb-0"><i class="bi bi-calendar-x"></i> Step 3: Leave Requests – {{ month_name }} {{ year }}</h5>
+  </div>
+  <div class="card-body">
+    <p class="text-muted">Enter leave requests for any employee. The system will try to honour all leaves, and will only cancel leaves when absolutely required to maintain shift coverage.</p>
+
+    <form method="post" class="row g-3 mb-4 p-3 bg-light rounded">
+      <input type="hidden" name="action" value="add"/>
+      <div class="col-md-4">
+        <label class="form-label fw-semibold">Employee ID</label>
+        <div class="input-group">
+          <input type="text" name="leave_emp_id" id="leave_emp_id" class="form-control"
+                 placeholder="6-digit ID" pattern="\d{6}" maxlength="6"/>
+          <button type="button" class="btn btn-outline-secondary" onclick="lookupLeaveEmp()">
+            <i class="bi bi-search"></i>
+          </button>
+        </div>
+        <div id="leave-emp-result" class="form-text mt-1"></div>
+      </div>
+      <div class="col-md-5">
+        <label class="form-label fw-semibold">Leave Days (comma-separated, 1–{{ days_in_month }})</label>
+        <input type="text" name="leave_days" class="form-control"
+               placeholder="e.g. 5, 6, 12" required/>
+        <div class="form-text">Enter day numbers of {{ month_name }} {{ year }}</div>
+      </div>
+      <div class="col-md-3 d-flex align-items-end">
+        <button type="submit" class="btn btn-warning w-100 text-dark">
+          <i class="bi bi-calendar-plus"></i> Add Leave
+        </button>
+      </div>
+    </form>
+
+    <!-- Quick employee list for reference -->
+    <details class="mb-3">
+      <summary class="fw-semibold text-primary" style="cursor:pointer">
+        <i class="bi bi-people"></i> View all employees &amp; their IDs
+      </summary>
+      <div class="table-responsive mt-2">
+        <table class="table table-sm table-striped table-bordered">
+          <thead class="table-dark"><tr><th>ID</th><th>Name</th><th>Role</th></tr></thead>
+          <tbody>
+            {% for emp in all_emps %}
+            <tr>
+              <td class="emp-id-click" style="cursor:pointer; color:var(--brand);"
+                  onclick="document.getElementById('leave_emp_id').value='{{ emp.id }}'; lookupLeaveEmp();">
+                {{ emp.id }}
+              </td>
+              <td>{{ emp.name }}</td>
+              <td><span class="badge bg-secondary">{{ emp.role }}</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+
+    <!-- Applied leaves table -->
+    {% if leave_display %}
+    <h6 class="fw-semibold mb-2">Requested Leaves:</h6>
+    <table class="table table-sm table-bordered">
+      <thead class="table-dark">
+        <tr><th>Emp ID</th><th>Name</th><th>Day</th><th>Day Name</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for l in leave_display %}
+        <tr>
+          <td>{{ l.emp_id }}</td>
+          <td>{{ l.name }}</td>
+          <td>{{ l.day }}</td>
+          <td>{{ l.day_name }}</td>
+          <td>
+            <form method="post" style="display:inline">
+              <input type="hidden" name="action" value="remove"/>
+              <input type="hidden" name="rm_emp_id" value="{{ l.emp_id }}"/>
+              <input type="hidden" name="rm_day" value="{{ l.day }}"/>
+              <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-x"></i></button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="alert alert-info py-2">
+      <i class="bi bi-info-circle"></i> No leave requests entered yet.
+    </div>
+    {% endif %}
+  </div>
+  <div class="card-footer d-flex justify-content-between">
+    <form method="post">
+      <input type="hidden" name="action" value="back"/>
+      <button type="submit" class="btn btn-outline-secondary">← Back</button>
+    </form>
+    <form method="post">
+      <input type="hidden" name="action" value="generate"/>
+      <button type="submit" class="btn btn-primary btn-lg">
+        <i class="bi bi-gear"></i> Generate Preview <i class="bi bi-arrow-right"></i>
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function lookupLeaveEmp() {
+  const id = document.getElementById('leave_emp_id').value.trim();
+  if (!id) return;
+  fetch(`/api/employee/${id}`)
+    .then(r => r.json())
+    .then(data => {
+      const el = document.getElementById('leave-emp-result');
+      if (data.found) {
+        el.textContent = `✓ ${data.name} (${data.role})`;
+        el.className = 'form-text text-success';
+      } else {
+        el.textContent = '✗ Employee not found';
+        el.className = 'form-text text-danger';
+      }
+    });
+}
+document.getElementById('leave_emp_id').addEventListener('input', function() {
+  if (this.value.length === 6) lookupLeaveEmp();
+});
+</script>
+{% endblock %}

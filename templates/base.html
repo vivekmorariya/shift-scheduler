@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% block title %}Shift Scheduler{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
+  <style>
+    :root {
+      --brand: #1F4E79;
+      --brand-light: #D6E4F0;
+    }
+    body { background: #f4f6f9; font-family: 'Segoe UI', sans-serif; }
+    .navbar { background: var(--brand) !important; }
+    .navbar-brand, .nav-link { color: #fff !important; }
+    .nav-link:hover { color: #D6E4F0 !important; }
+    .card { border: none; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
+    .card-header { background: var(--brand); color: #fff; border-radius: 12px 12px 0 0 !important; }
+    .btn-primary { background: var(--brand); border-color: var(--brand); }
+    .btn-primary:hover { background: #163e61; border-color: #163e61; }
+    .badge-shift1 { background: #D6E4F0; color: #1a4470; }
+    .badge-shift2 { background: #FFF2CC; color: #7d6608; }
+    .badge-shift3 { background: #FCE4D6; color: #7d2a00; }
+    .badge-woff   { background: #E2EFDA; color: #2d6a00; }
+    .badge-leave  { background: #F4CCCC; color: #7d0000; }
+    /* Schedule table */
+    .sched-table { font-size: 0.76rem; }
+    .sched-table th, .sched-table td { padding: 4px 6px; text-align: center; white-space: nowrap; }
+    .sched-table .name-col { text-align: left; min-width: 140px; }
+    .cell-1  { background: #D6E4F0; }
+    .cell-2  { background: #FFF2CC; }
+    .cell-3  { background: #FCE4D6; }
+    .cell-W  { background: #E2EFDA; font-weight: 600; }
+    .cell-L  { background: #F4CCCC; font-weight: 600; color: #c0392b; }
+    .cell-sun { background: #D9D9D9 !important; }
+    .row-section { background: var(--brand-light); font-weight: 700; font-size: 0.8rem; }
+    .sticky-col { position: sticky; left: 0; z-index: 2; background: #fff; }
+    .sticky-col2 { position: sticky; left: 60px; z-index: 2; background: #fff; }
+    .sticky-col3 { position: sticky; left: 120px; z-index: 2; background: #fff; }
+    @media (max-width: 768px) {
+      .sched-table { font-size: 0.65rem; }
+      .sched-table th, .sched-table td { padding: 2px 3px; }
+    }
+    .wizard-steps { display: flex; gap: 8px; margin-bottom: 20px; }
+    .wizard-step { flex: 1; padding: 8px; text-align: center; border-radius: 8px;
+                   background: #e9ecef; color: #666; font-size: 0.85rem; }
+    .wizard-step.active { background: var(--brand); color: #fff; font-weight: 600; }
+    .wizard-step.done { background: #198754; color: #fff; }
+    footer { margin-top: 40px; padding: 20px; text-align: center; color: #888; font-size: 0.8rem; }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+<nav class="navbar navbar-expand-lg">
+  <div class="container">
+    <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">
+      <i class="bi bi-calendar3"></i> Shift Scheduler
+    </a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMenu">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navMenu">
+      <ul class="navbar-nav ms-auto">
+        {% if user %}
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('index') }}"><i class="bi bi-house"></i> Dashboard</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('employees') }}"><i class="bi bi-people"></i> Employees</a>
+          </li>
+          {% if role == 'admin' %}
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('new_schedule') }}"><i class="bi bi-plus-circle"></i> New Schedule</a>
+          </li>
+          {% endif %}
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('logout') }}"><i class="bi bi-box-arrow-right"></i> Logout ({{ user }})</a>
+          </li>
+        {% endif %}
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<div class="container py-4">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+      </div>
+    {% endfor %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</div>
+
+<footer>Shift Scheduler &copy; {{ 2026 }} &nbsp;|&nbsp; Developed with ❤️ by Vivek Morariya</footer>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

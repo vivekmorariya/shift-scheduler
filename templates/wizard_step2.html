@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Step 2: Leavers{% endblock %}
+{% block content %}
+<div class="wizard-steps">
+  <div class="wizard-step done">1. New Joiners</div>
+  <div class="wizard-step active">2. Leavers</div>
+  <div class="wizard-step">3. Leave Requests</div>
+  <div class="wizard-step">4. Preview & Generate</div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h5 class="mb-0"><i class="bi bi-person-dash"></i> Step 2: Employees Leaving</h5>
+  </div>
+  <div class="card-body">
+    <p class="text-muted">Are any employees leaving the organisation this month? Enter their Employee ID to remove them from the schedule.</p>
+
+    <form method="post" class="row g-3 mb-4 p-3 bg-light rounded">
+      <input type="hidden" name="action" value="add"/>
+      <div class="col-md-5">
+        <label class="form-label fw-semibold">Employee ID (6-digit)</label>
+        <div class="input-group">
+          <input type="text" name="leaving_id" id="leaving_id" class="form-control"
+                 placeholder="Enter ID to search" pattern="\d{6}" maxlength="6"/>
+          <button type="button" class="btn btn-outline-secondary" onclick="lookupEmployee()">
+            <i class="bi bi-search"></i>
+          </button>
+        </div>
+        <div id="emp-lookup-result" class="form-text text-success mt-1"></div>
+      </div>
+      <div class="col-md-3 d-flex align-items-end">
+        <button type="submit" class="btn btn-danger w-100">
+          <i class="bi bi-person-dash"></i> Mark as Leaving
+        </button>
+      </div>
+    </form>
+
+    {% if leaving_details %}
+    <h6 class="fw-semibold mb-2">Employees Marked as Leaving:</h6>
+    <table class="table table-sm table-bordered">
+      <thead class="table-dark">
+        <tr><th>Emp ID</th><th>Name</th><th>Role</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for emp in leaving_details %}
+        <tr>
+          <td>{{ emp.id }}</td>
+          <td>{{ emp.name }}</td>
+          <td><span class="badge bg-danger">{{ emp.role }}</span></td>
+          <td>
+            <form method="post" style="display:inline">
+              <input type="hidden" name="action" value="remove"/>
+              <input type="hidden" name="idx" value="{{ loop.index0 }}"/>
+              <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-x"></i> Undo</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="alert alert-info py-2">
+      <i class="bi bi-info-circle"></i> No employees marked as leaving.
+    </div>
+    {% endif %}
+  </div>
+  <div class="card-footer d-flex justify-content-between">
+    <form method="post">
+      <input type="hidden" name="action" value="back"/>
+      <button type="submit" class="btn btn-outline-secondary">← Back</button>
+    </form>
+    <form method="post">
+      <input type="hidden" name="action" value="next"/>
+      <button type="submit" class="btn btn-primary">Next: Leave Requests <i class="bi bi-arrow-right"></i></button>
+    </form>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function lookupEmployee() {
+  const id = document.getElementById('leaving_id').value.trim();
+  if (!id) return;
+  fetch(`/api/employee/${id}`)
+    .then(r => r.json())
+    .then(data => {
+      const el = document.getElementById('emp-lookup-result');
+      if (data.found) {
+        el.textContent = `✓ Found: ${data.name} (${data.role})`;
+        el.className = 'form-text text-success';
+      } else {
+        el.textContent = '✗ Employee not found';
+        el.className = 'form-text text-danger';
+      }
+    });
+}
+document.getElementById('leaving_id').addEventListener('input', function() {
+  if (this.value.length === 6) lookupEmployee();
+});
+</script>
+{% endblock %}

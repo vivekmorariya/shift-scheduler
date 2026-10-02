@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Login – Shift Scheduler{% endblock %}
+{% block content %}
+<div class="row justify-content-center mt-5">
+  <div class="col-md-4 col-sm-8">
+    <div class="card">
+      <div class="card-header text-center py-3">
+        <h4 class="mb-0"><i class="bi bi-calendar3"></i> Shift Scheduler</h4>
+        <small>Please sign in to continue</small>
+      </div>
+      <div class="card-body p-4">
+        <form method="post">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Username</label>
+            <input type="text" name="username" class="form-control form-control-lg"
+                   placeholder="admin / manager" autofocus required/>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Password</label>
+            <input type="password" name="password" class="form-control form-control-lg"
+                   placeholder="Password" required/>
+          </div>
+          <button type="submit" class="btn btn-primary w-100 btn-lg">
+            <i class="bi bi-box-arrow-in-right"></i> Sign In
+          </button>
+        </form>
+      </div>
+    </div>
+    <div class="text-center mt-3 text-muted small">
+      <strong>Admin:</strong> admin / admin123 &nbsp;&nbsp;
+      <strong>Manager:</strong> manager / mgr456
+    </div>
+  </div>
+</div>
+{% endblock %}

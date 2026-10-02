@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Step 1: New Joiners{% endblock %}
+{% block content %}
+<div class="wizard-steps">
+  <div class="wizard-step active">1. New Joiners</div>
+  <div class="wizard-step">2. Leavers</div>
+  <div class="wizard-step">3. Leave Requests</div>
+  <div class="wizard-step">4. Preview & Generate</div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h5 class="mb-0"><i class="bi bi-person-plus"></i> Step 1: New Joiners for {{ wizard.month }}/{{ wizard.year }}</h5>
+  </div>
+  <div class="card-body">
+    <p class="text-muted">Are there any new employees joining in this month? Add them below, or click <strong>Next</strong> if none.</p>
+
+    <!-- Add new joiner form -->
+    <form method="post" class="row g-3 mb-4 p-3 bg-light rounded">
+      <input type="hidden" name="action" value="add"/>
+      <div class="col-md-3">
+        <label class="form-label fw-semibold">Employee ID (6-digit)</label>
+        <input type="text" name="emp_id" class="form-control" placeholder="e.g. 900123"
+               pattern="\d{6}" maxlength="6" required/>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label fw-semibold">Full Name</label>
+        <input type="text" name="emp_name" class="form-control" placeholder="Full name" required/>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label fw-semibold">Role</label>
+        <select name="emp_role" class="form-select" required>
+          {% for r in roles %}
+          <option value="{{ r }}">{{ r }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2 d-flex align-items-end">
+        <button type="submit" class="btn btn-success w-100">
+          <i class="bi bi-plus-circle"></i> Add
+        </button>
+      </div>
+    </form>
+
+    <!-- List of added joiners -->
+    {% if wizard.new_employees %}
+    <h6 class="fw-semibold mb-2">New Joiners Added:</h6>
+    <table class="table table-sm table-bordered">
+      <thead class="table-dark">
+        <tr><th>Emp ID</th><th>Name</th><th>Role</th><th></th></tr>
+      </thead>
+      <tbody>
+      {% for ne in wizard.new_employees %}
+        <tr>
+          <td>{{ ne.id }}</td>
+          <td>{{ ne.name }}</td>
+          <td><span class="badge bg-secondary">{{ ne.role }}</span></td>
+          <td>
+            <form method="post" style="display:inline">
+              <input type="hidden" name="action" value="remove"/>
+              <input type="hidden" name="idx" value="{{ loop.index0 }}"/>
+              <button type="submit" class="btn btn-sm btn-danger"><i class="bi bi-trash"></i></button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="alert alert-info py-2">
+      <i class="bi bi-info-circle"></i> No new joiners added yet.
+    </div>
+    {% endif %}
+  </div>
+  <div class="card-footer d-flex justify-content-between">
+    <a href="{{ url_for('new_schedule') }}" class="btn btn-outline-secondary">← Back</a>
+    <form method="post">
+      <input type="hidden" name="action" value="next"/>
+      <button type="submit" class="btn btn-primary">Next: Leavers <i class="bi bi-arrow-right"></i></button>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}{{ month_name }} {{ result.year }} Schedule{% endblock %}
+{% block head %}
+<style>
+  .sched-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-calendar-month"></i> {{ month_name }} {{ result.year }} Schedule</h4>
+    <small class="text-muted">{{ result.days_in_month }}-day schedule • {{ result.meta|length }} employees</small>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('download_schedule', year=result.year, month=result.month) }}"
+       class="btn btn-success">
+      <i class="bi bi-file-earmark-excel"></i> Download Excel
+    </a>
+    <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
+      <i class="bi bi-arrow-left"></i> Dashboard
+    </a>
+  </div>
+</div>
+
+<!-- Warnings & cancelled leaves (collapsed by default) -->
+{% if result.cancelled_leaves %}
+<details class="mb-3">
+  <summary class="fw-semibold text-danger" style="cursor:pointer">
+    <i class="bi bi-x-circle"></i> {{ result.cancelled_leaves|length }} Leave(s) Cancelled – Click to expand
+  </summary>
+  <div class="alert alert-danger mt-2">
+    <ul class="mb-0">
+      {% for cl in result.cancelled_leaves %}
+      <li><strong>{{ cl.emp_name }}</strong> – Day {{ cl.day }}, Shift {{ cl.shift }}: {{ cl.reason }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+</details>
+{% endif %}
+
+{% if result.warnings %}
+<details class="mb-3">
+  <summary class="fw-semibold text-warning" style="cursor:pointer">
+    <i class="bi bi-exclamation-triangle"></i> {{ result.warnings|length }} Warning(s) – Click to expand
+  </summary>
+  <div class="alert alert-warning mt-2">
+    <ul class="mb-0">
+      {% for w in result.warnings %}
+      <li>{{ w }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+</details>
+{% endif %}
+
+{% if not result.warnings and not result.cancelled_leaves %}
+<div class="alert alert-success py-2 mb-3">
+  <i class="bi bi-check-circle"></i> All constraints satisfied. No issues found.
+</div>
+{% endif %}
+
+<!-- Main schedule table -->
+<div class="card mb-3">
+  <div class="card-body p-1">
+    <div class="sched-wrap">
+      {% set days = range(1, result.days_in_month + 1) %}
+      <table class="table table-bordered sched-table mb-0">
+        <thead>
+          <tr style="background:#1F4E79; color:#fff;">
+            <th class="sticky-col" style="background:#1F4E79; color:#fff;">ID</th>
+            <th class="sticky-col2" style="background:#1F4E79; color:#fff; min-width:140px;">Name</th>
+            {% for day in days %}
+            <th style="background:#1F4E79; color:#fff;">
+              {{ day }}<br>
+              <small style="font-size:0.65rem;">{{ day_name_fn(result.year, result.month, day) }}</small>
+            </th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in role_order %}
+            {% set r_emps = [] %}
+            {% for eid, info in result.meta.items() %}
+              {% if info.role == r %}{% do r_emps.append((eid, info)) %}{% endif %}
+            {% endfor %}
+            {% if r_emps %}
+            <tr class="row-section">
+              <td colspan="{{ result.days_in_month + 2 }}" style="letter-spacing:1px; text-transform:uppercase;">{{ r }}</td>
+            </tr>
+            {% for eid, info in r_emps %}
+            <tr>
+              <td class="sticky-col text-muted small">{{ eid }}</td>
+              <td class="sticky-col2 name-col fw-semibold" style="font-size:0.78rem;">{{ info.name }}</td>
+              {% for day in days %}
+                {% set val = result.employee_schedules.get(eid, {}).get(day|string, '') %}
+                {% set is_sun = day_name_fn(result.year, result.month, day) == 'Sun' %}
+                <td class="cell-{{ val }} {% if is_sun and val == 'W' %}cell-sun{% endif %}"
+                    title="{{ info.name }} – Day {{ day }}: {{ val }}">
+                  {{ val }}
+                </td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+            {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Summary counts -->
+<div class="card mb-3">
+  <div class="card-header py-2">
+    <small class="fw-bold"><i class="bi bi-bar-chart"></i> Daily Shift Counts</small>
+  </div>
+  <div class="card-body p-1">
+    <div class="sched-wrap">
+      <table class="table table-sm table-bordered sched-table mb-0">
+        <thead>
+          <tr>
+            <th colspan="2">Shift</th>
+            {% for day in days %}
+            <th>{{ day }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for shift_label, shift_key, bg in [('First','1','cell-1'),('Second','2','cell-2'),('Third','3','cell-3'),('W/Off','W','cell-W'),('Leave','L','cell-L')] %}
+          <tr>
+            <td colspan="2" class="{{ bg }} fw-semibold">{{ shift_label }}</td>
+            {% for day in days %}
+              {% set count = namespace(n=0) %}
+              {% for eid in result.employee_schedules %}
+                {% if result.employee_schedules[eid].get(day|string) == shift_key %}
+                  {% set count.n = count.n + 1 %}
+                {% endif %}
+              {% endfor %}
+              <td class="{% if count.n == 0 and shift_key in ('1','2','3') %}text-danger fw-bold{% endif %}">
+                {{ count.n }}
+              </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Legend -->
+<div class="card">
+  <div class="card-body py-2">
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+      <span class="fw-semibold small">Legend:</span>
+      <span class="badge badge-shift1 px-3 py-2">1 – Morning Shift</span>
+      <span class="badge badge-shift2 px-3 py-2">2 – Afternoon Shift</span>
+      <span class="badge badge-shift3 px-3 py-2">3 – Night Shift</span>
+      <span class="badge badge-woff px-3 py-2">W – Weekly Off</span>
+      <span class="badge badge-leave px-3 py-2">L – Leave</span>
+      <span class="badge bg-danger px-3 py-2" style="font-size:0.7rem;">Red count = 0 on that shift</span>
+    </div>
+  </div>
+</div>
+{% endblock %}
