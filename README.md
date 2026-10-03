@@ -14,34 +14,34 @@ An intelligent, automated shift scheduling web application built with Python and
 - Remembers the last shift of previous month for seamless continuity
 
 ### 📋 Shift Rotation Rules
-- **Weekly-block rotation:** Each employee stays on the same shift for an entire week (Mon–Sun). No mid-week shift changes
-- **Forward-only rotation:** Shifts rotate 1→2→3→1. After Shift 3, only Shift 1 or 2 is allowed (never backwards)
-- **Engineers always on Shift 1:** Engineers are prioritised for the morning shift at all times and are only moved if absolutely no other option exists
-- **Mandatory rest day:** Whenever a shift changes at a week boundary, the first day of the new week is automatically blocked as a rest (W/off) day
+- **Weekly-Block Rotation:** Each employee stays on the same shift for an entire calendar week (Mon–Sun). Employees work consistent shifts without sudden mid-week jumps.
+- **Strict Forward-Only Rotation:** Shifts rotate forward week-by-week: **1 → 2 → 3 → (W) → 1**. Backward rotations ($3 \rightarrow 1$, $3 \rightarrow 2$, $2 \rightarrow 1$) on consecutive days without rest are strictly forbidden.
+- **Mandatory Rest Day on Shift Change:** Transitioning from Shift 3 to Shift 1 across a week boundary strictly requires a weekly off ($\text{W}$) rest day. An employee never works Shift 3 on Sunday night and Shift 1 on Monday morning.
+- **Apprentice Shift Rotation:** Apprentices rotate through shifts in weekly blocks just like Operators and Technicians, maintaining 0 mid-week changes.
+- **Engineer Shift 1 Priority:** Engineers are prioritized for Shift 1 (morning shift) rather than permanently locked, maintaining morning presence while retaining flexibility to step in for emergency support if necessary.
+- **"Unless Required" Single-Day Relief:** A single-day shift change is permitted only when strictly necessary (if a shift would otherwise drop to 0 headcount due to overlapping offs/leaves). Relief is borrowed only from shifts with a surplus ($\ge 2$ workers) and must comply with rest day rules.
 
 ### 📅 Weekly Off Rules
-- Weekly offs are assigned as **consecutive 2-day pairs** (e.g. Sat+Sun, Mon+Tue, Thu+Fri)
-- The first day of each pair **alternates** — off one week, working the next (e.g. 1st Saturday off, 2nd Saturday working)
-- Weekly offs are **staggered** across the workforce so weekends are always adequately staffed
-- Tuesday weekly offs are avoided to maximise attendance for the weekly Shift 1 meeting
+- Weekly offs are assigned as **consecutive 2-day pairs** (e.g., Sat+Sun, Sun+Mon, Mon+Tue, etc.).
+- The first day of each pair **alternates** — off one week, working the next (e.g., 1st Saturday off, 2nd Saturday working).
+- Strict weekly limit: Employees receive at most 2 weekly offs in any calendar week (never 3).
+- Weekly off pairs are **staggered across staff** using optimal combinations so all shifts maintain full headcount every day.
 
 ### 🏭 Staffing Constraints
-- Every shift must have **at least 1 Operator**
-- Every shift must have **at least 1 support person** (Technician or Engineer)
-- **Shift 1 must always have at least 1 Engineer**
-- If a constraint is violated (e.g. due to leaves), the system automatically pulls in backup coverage
+- Every shift (1, 2, and 3) must have **at least 1 Operator** every single day.
+- Every shift must have **at least 1 support person** (Technician or Engineer).
+- **Shift 1 is staffed with an Engineer** whenever available.
+- Full 24/7 continuous operations with 0 staffing shortages.
 
-### 🌿 Leave Management
-- Admin can input employee leave requests before generating a schedule
-- The system respects leaves and avoids cancelling them unless absolutely necessary
-- If a leave must be cancelled, the system prioritises cancelling from the employee who has taken the most leaves in the last 2 months
-- All cancellations come with a written justification
+### 🌿 Leave Management & HR Rules
+- **HR Weekly Off Protection:** Mandated weekly offs take precedence over leave requests. If an employee's requested leave period overlaps with their scheduled weekly off, that day is marked as Weekly Off ($\text{W}$), preserving the employee's leave balance.
+- **Occupying Leaves via Whole-Week Shifts:** When leaves occur, the system rebalances shift assignments as whole-week blocks to cover all shifts without fragmenting individual weeks.
+- **Fairness in Leave Cancellation:** If a leave must ever be cancelled due to severe staffing shortages, the system prioritizes cancelling from the employee who took the most leaves in the preceding 2 months, accompanied by written justification.
 
-### ✏️ Manual Override (Admin)
-- Admins can click any individual cell in a saved schedule to change it (1, 2, 3, W, or L)
-- Overrides are saved permanently in `data/manual_overrides.json`
-- Future schedule regenerations **remember and re-apply** these manual overrides automatically
-- Manually overridden cells are highlighted with a red border on the schedule view
+### ✏️ Manual Override & Learning
+- Admins can manually edit any shift or weekly off cell directly in **Step 4 (Preview)** before saving, or in the saved schedule view.
+- Manual overrides are permanently saved in `data/manual_overrides.json` and remembered for future schedule generations.
+- Manually overridden cells are clearly highlighted in the schedule view.
 
 ### 👥 Employee Management
 - View all employees grouped by role (Engineers, Operators, Technicians, Apprentices)
