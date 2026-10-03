@@ -263,6 +263,14 @@ def assign_optimal_pairs(members: list, start_shifts: dict, leaves_dict: dict, w
             if s2 < 1 or s3 < 1 or s1 < 1:
                 v_count += 1
 
+        # Ensure all group members rotate (at least 2 distinct working shifts)
+        rotated_count = sum(
+            1 for eid in eids
+            if len({sch[eid].get(d) for d in range(1, days_in_month + 1) if sch[eid].get(d) in ("1", "2", "3")}) >= 2
+        )
+        if rotated_count < len(eids):
+            v_count += (len(eids) - rotated_count) * 100
+
         if v_count == 0:
             return {eids[i]: (p_tuple[i], i % 2 == 1) for i in range(len(eids))}
 
@@ -279,90 +287,103 @@ def assign_optimal_pairs(members: list, start_shifts: dict, leaves_dict: dict, w
 
 def solve_shift_group(members: list, start_shifts: dict, woffs_dict: dict, leaves_dict: dict, days_in_month: int) -> dict:
     """
-    Assign shifts for a role group (Operators or Technicians) day by day.
+    Assign shifts for a role group (Operators, Technicians, Apprentices) day by day.
     Strictly enforces:
       - 1->2 and 2->3 forward progression on consecutive days.
       - 3->1 ONLY permitted after at least 1 W/off rest day.
       - 3->2 and 2->1 forbidden on consecutive days.
       - Exactly 1 person on Shift 3, 1 person on Shift 2, rest on Shift 1.
+      - Fair rotation: ensures ALL members rotate across shifts (no one stuck on Shift 1).
+      - HR rule: Weekly offs take priority over leaves (leaves do not consume weekly offs).
     """
     days = list(range(1, days_in_month + 1))
     eids = [str(m["id"]) for m in members]
     sched = {eid: {} for eid in eids}
 
-    # Step 1: Pre-populate Leaves and Weekly Offs
+    # Step 1: Pre-populate Weekly Offs and Leaves (HR Rule: Weekly off takes priority!)
     for eid in eids:
         for d in days:
-            if d in leaves_dict.get(eid, []):
-                sched[eid][d] = "L"
-            elif d in woffs_dict.get(eid, set()):
+            if d in woffs_dict.get(eid, set()):
                 sched[eid][d] = "W"
+            elif d in leaves_dict.get(eid, []):
+                sched[eid][d] = "L"
 
-    # Step 2: Forward simulation with state machine
+    shift_counts = {eid: {"1": 0, "2": 0, "3": 0} for eid in eids}
+
+    # Step 2: Forward simulation with fair rotation state machine
     for d in days:
-        working = [eid for eid in eids if d not in leaves_dict.get(eid, []) and d not in woffs_dict.get(eid, set())]
+        working = [eid for eid in eids if sched[eid].get(d) is None]
 
         prev_shift = {}
+        had_rest = {}
         for eid in working:
             ps = None
+            rest = False
             for prev_d in range(d - 1, 0, -1):
-                if sched[eid].get(prev_d) in ("1", "2", "3"):
-                    ps = sched[eid][prev_d]
+                v = sched[eid].get(prev_d)
+                if v in ("1", "2", "3"):
+                    ps = v
                     break
+                if v in ("W", "L"):
+                    rest = True
             if ps is None:
                 ps = start_shifts.get(eid, "1")
             prev_shift[eid] = ps
+            had_rest[eid] = rest or (d == 1)
 
         allowed = {}
         for eid in working:
-            had_rest = False
-            for prev_d in range(d - 1, 0, -1):
-                if sched[eid].get(prev_d) in ("1", "2", "3"):
-                    break
-                if sched[eid].get(prev_d) in ("W", "L"):
-                    had_rest = True
-            if d == 1:
-                had_rest = False
-
             ps = prev_shift[eid]
             if ps == "3":
                 # Can stay on 3, or rotate to 1 if had rest day
-                allowed[eid] = ["1", "3"] if had_rest else ["3"]
+                allowed[eid] = ["1", "3"] if had_rest[eid] else ["3"]
             elif ps == "2":
                 # Can stay on 2 or advance to 3. If had rest day, can also rotate to 1
-                allowed[eid] = ["1", "2", "3"] if had_rest else ["2", "3"]
+                allowed[eid] = ["1", "2", "3"] if had_rest[eid] else ["2", "3"]
             else: # "1"
                 allowed[eid] = ["1", "2"]
 
-        # Shift 3 assignment: exactly 1 person
+        # Shift 3 assignment: exactly 1 person (fair rotation preference)
         forced_s3 = [eid for eid in working if prev_shift[eid] == "3" and "1" not in allowed[eid]]
         if forced_s3:
             chosen_s3 = forced_s3[0]
         else:
             c_s3 = [eid for eid in working if "3" in allowed[eid]]
-            c_s3.sort(key=lambda eid: 0 if prev_shift[eid] == "3" else (1 if prev_shift[eid] == "2" else 2))
+            c_s3.sort(key=lambda eid: (
+                0 if (prev_shift[eid] == "2" and shift_counts[eid]["3"] < shift_counts[eid]["2"])
+                else (1 if prev_shift[eid] == "3" else 2),
+                shift_counts[eid]["3"]
+            ))
             chosen_s3 = c_s3[0] if c_s3 else None
 
-        # Shift 2 assignment: exactly 1 person
+        # Shift 2 assignment: exactly 1 person (fair rotation preference)
         forced_s2 = [eid for eid in working if eid != chosen_s3 and prev_shift[eid] == "2" and "1" not in allowed[eid]]
         if forced_s2:
             chosen_s2 = forced_s2[0]
         else:
             c_s2 = [eid for eid in working if eid != chosen_s3 and "2" in allowed[eid]]
-            c_s2.sort(key=lambda eid: 0 if prev_shift[eid] == "2" else (1 if prev_shift[eid] == "1" else 2))
+            c_s2.sort(key=lambda eid: (
+                0 if (prev_shift[eid] == "1" and shift_counts[eid]["2"] < shift_counts[eid]["1"])
+                else (1 if prev_shift[eid] == "2" else 2),
+                shift_counts[eid]["2"]
+            ))
             chosen_s2 = c_s2[0] if c_s2 else None
 
         # Shift 1 assignment: all other working people
         for eid in working:
             if eid == chosen_s3:
                 sched[eid][d] = "3"
+                shift_counts[eid]["3"] += 1
             elif eid == chosen_s2:
                 sched[eid][d] = "2"
+                shift_counts[eid]["2"] += 1
             else:
                 if "1" not in allowed[eid]:
                     sched[eid][d] = prev_shift[eid]
+                    shift_counts[eid][prev_shift[eid]] += 1
                 else:
                     sched[eid][d] = "1"
+                    shift_counts[eid]["1"] += 1
 
     return sched
 
@@ -422,6 +443,7 @@ def generate_schedule(
 
     op_starts = build_start_shifts(operators)
     tech_starts = build_start_shifts(technicians)
+    app_starts = build_start_shifts(apprentices)
 
     # Convert requested leaves keys to string
     leaves_clean = {str(k): list(v) for k, v in requested_leaves.items()}
@@ -429,25 +451,22 @@ def generate_schedule(
     # Assign optimal W/off pairs for coverage
     op_pair_config = assign_optimal_pairs(operators, op_starts, leaves_clean, weeks, year, month)
     tech_pair_config = assign_optimal_pairs(technicians, tech_starts, leaves_clean, weeks, year, month)
+    app_pair_config = assign_optimal_pairs(apprentices, app_starts, leaves_clean, weeks, year, month)
 
     op_woffs = {eid: get_woff_days_for_pair(year, month, pair, weeks, alt) for eid, (pair, alt) in op_pair_config.items()}
     tech_woffs = {eid: get_woff_days_for_pair(year, month, pair, weeks, alt) for eid, (pair, alt) in tech_pair_config.items()}
+    app_woffs = {eid: get_woff_days_for_pair(year, month, pair, weeks, alt) for eid, (pair, alt) in app_pair_config.items()}
 
-    # Engineers: stagger across PAIR_POOL, always Shift 1 (Rule 4)
+    # Engineers: stagger across PAIR_POOL, prioritized for Shift 1
     eng_woffs = {
         str(e["id"]): get_woff_days_for_pair(year, month, PAIR_POOL[i % len(PAIR_POOL)], weeks, alt_even=(i % 2 == 1))
         for i, e in enumerate(engineers)
     }
 
-    # Apprentices: stagger across PAIR_POOL, always Shift 1
-    app_woffs = {
-        str(e["id"]): get_woff_days_for_pair(year, month, PAIR_POOL[i % len(PAIR_POOL)], weeks, alt_even=(i % 2 == 1))
-        for i, e in enumerate(apprentices)
-    }
-
-    # Solve Operators and Technicians
+    # Solve Operators, Technicians, and Apprentices with fair forward rotation
     op_sched = solve_shift_group(operators, op_starts, op_woffs, leaves_clean, days_in_month)
     tech_sched = solve_shift_group(technicians, tech_starts, tech_woffs, leaves_clean, days_in_month)
+    app_sched = solve_shift_group(apprentices, app_starts, app_woffs, leaves_clean, days_in_month)
 
     # Assemble full schedule
     full_sched = {}
@@ -460,22 +479,15 @@ def generate_schedule(
             full_sched[eid] = op_sched[eid]
         elif e["role"] == "Technicians":
             full_sched[eid] = tech_sched[eid]
+        elif e["role"] == "Apprentices":
+            full_sched[eid] = app_sched[eid]
         elif e["role"] == "Engineers":
             full_sched[eid] = {}
             for d in days:
-                if d in leaves_clean.get(eid, []):
-                    full_sched[eid][d] = "L"
-                elif d in eng_woffs[eid]:
+                if d in eng_woffs[eid]:
                     full_sched[eid][d] = "W"
-                else:
-                    full_sched[eid][d] = "1"
-        else: # Apprentices
-            full_sched[eid] = {}
-            for d in days:
-                if d in leaves_clean.get(eid, []):
+                elif d in leaves_clean.get(eid, []):
                     full_sched[eid][d] = "L"
-                elif d in app_woffs[eid]:
-                    full_sched[eid][d] = "W"
                 else:
                     full_sched[eid][d] = "1"
 
