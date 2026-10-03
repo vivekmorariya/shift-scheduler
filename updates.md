@@ -122,6 +122,25 @@ To solve this permanently, we redesigned the engine from the ground up:
 5. **"Unless Required" Single-Day Relief:**
    A single-day shift change is allowed **only when strictly necessary** (if a shift would otherwise drop to 0 headcount). It is borrowed strictly from shifts with surplus headcount ($\ge 2$ people) and must satisfy forward-transition and rest-day rules.
 
+### Phase 7: Eliminating the Sunday Day 8 Shift 1 Anomaly in Anil's Schedule
+During deployment testing on PythonAnywhere, the user observed a glaring shift rotation violation on operator **Anil Kumar Singh**'s row:
+- Days 1 to 5: Shift 3 (night)
+- Days 6 & 7 (Fri & Sat): Weekly Off (`W`)
+- **Day 8 (Sun): Shift 1** (morning)
+- **Day 9 (Mon): Shift 3** (night)
+
+**Root Cause:**
+1. On Sunday Day 8, Shift 1 experienced a temporary headcount drop because the primary assigned Shift 1 operator was on weekly off.
+2. The legacy relief algorithm noticed that Anil had just completed two weekly offs on Days 6 & 7. It considered him rested and grabbed him to cover Shift 1 on Sunday Day 8.
+3. On Monday Day 9, Week 2 began, where Anil's assigned shift was Shift 3.
+4. This created an erratic sequence where a night-shift worker was unexpectedly handed morning shift on Sunday, only to report for night shift on Monday.
+
+**Permanent Architectural Fix:**
+1. **Strict Prohibition on Backward Relief:** A worker whose assigned weekly shift is Shift 3 is **strictly blocked** from ever relieving Shift 1 or Shift 2. Likewise, Shift 2 workers cannot relieve Shift 1.
+2. **Week 0 & Week 1 Continuity:** Week 0 (Day 1) enforces continuation of the previous month's ending shift. Anil continues Shift 3 throughout Week 1 (including Sunday Day 8).
+3. **Staggered Pair Alignment:** Optimal pair permutation guarantees that at least one primary Shift 1 operator is on duty on Sundays, completely eliminating the need for Sunday relief coverage from night-shift personnel.
+4. Result: Anil works **Shift 3 on Day 8**, proceeds to **Shift 3 on Day 9**, and safely transitions into his scheduled leave and rest days with **zero backward jumps**.
+
 ---
 
 ## 4. Detailed Breakdown of Technical Challenges & Solutions

@@ -364,14 +364,19 @@ def solve_shift_group(
             fwd_s = cycle[(p_idx + 1) % 3]  # normal forward rotation
             same_s = prev_s
 
-            # 3 -> 1 Rest Day Rule: Must have W/L on Sunday or Monday
-            if prev_s == "3" and fwd_s == "1" and w_idx > 0:
+            # Week 0 (partial week at start of month): stay on previous month's starting shift
+            if w_idx == 0:
+                cand_shifts[eid] = [prev_s]
+                continue
+
+            # 3 -> 1 Rest Day Rule: Must have W/L on Sunday (end of prev week) or Monday (start of new week)
+            if prev_s == "3" and fwd_s == "1":
                 prev_w_days = weeks[w_idx - 1]
                 sun_d = prev_w_days[-1]
                 mon_d = w_days[0]
                 has_rest = (sched[eid].get(sun_d) in ("W", "L")) or (sched[eid].get(mon_d) in ("W", "L"))
                 if not has_rest:
-                    cand_shifts[eid] = ["3"]
+                    cand_shifts[eid] = ["3"]  # Cannot rotate to 1 without rest! Must stay on 3
                 else:
                     cand_shifts[eid] = [fwd_s, same_s]
             else:
@@ -421,6 +426,13 @@ def solve_shift_group(
                     for eid in eids:
                         cur_s = sched[eid].get(d)
                         if cur_s in ("1", "2", "3") and cur_s != target:
+                            # STRICT PROHIBITION: NEVER borrow backwards for relief!
+                            # A Shift 3 worker can NEVER be put on Shift 1 or Shift 2!
+                            if cur_s == "3" and target in ("1", "2"):
+                                continue
+                            # A Shift 2 worker can NEVER be put on Shift 1!
+                            if cur_s == "2" and target == "1":
+                                continue
                             cur_s_cnt = sum(1 for o_eid in eids if sched[o_eid].get(d) == cur_s)
                             if cur_s_cnt > 1:  # Only borrow from shift with surplus
                                 cands.append(eid)
