@@ -3,6 +3,9 @@
 {% block head %}
 <style>
   .sched-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .cell-editable { cursor: pointer; transition: background-color 0.15s; }
+  .cell-editable:hover { outline: 2px solid #1F4E79; opacity: 0.85; }
+  .cell-manual { outline: 2px solid #e74c3c !important; font-weight: bold; position: relative; }
 </style>
 {% endblock %}
 {% block content %}
@@ -53,6 +56,16 @@
     {% endif %}
 
     <!-- Schedule table -->
+    {% if role == 'admin' %}
+    <div class="alert alert-info py-2 mb-2 d-flex align-items-center justify-content-between">
+      <div>
+        <i class="bi bi-pencil-square me-1"></i>
+        <strong>Admin Manual Edit:</strong> Click any shift cell below to manually change the shift or weekly off before confirming.
+      </div>
+      <span class="badge bg-danger">Red outline = manually edited</span>
+    </div>
+    {% endif %}
+
     <div class="sched-wrap">
       {% set days = range(1, result.days_in_month + 1) %}
       <table class="table table-bordered sched-table mb-0">
@@ -71,14 +84,14 @@
           </tr>
         </thead>
         <tbody>
-          {% for role in role_order %}
+          {% for r in role_order %}
             {% set role_emps = [] %}
             {% for eid, info in result.meta.items() %}
-              {% if info.role == role %}{% do role_emps.append((eid, info)) %}{% endif %}
+              {% if info.role == r %}{% do role_emps.append((eid, info)) %}{% endif %}
             {% endfor %}
             {% if role_emps %}
             <tr class="row-section">
-              <td colspan="{{ result.days_in_month + 2 }}">{{ role }}</td>
+              <td colspan="{{ result.days_in_month + 2 }}">{{ r }}</td>
             </tr>
             {% for eid, info in role_emps %}
             <tr>
@@ -86,9 +99,20 @@
               <td class="sticky-col2 name-col">{{ info.name }}</td>
               {% for day in days %}
                 {% set val = result.employee_schedules.get(eid, {}).get(day|string, '') %}
-                <td class="cell-{{ val }} {% if day_name_fn(result.year, result.month, day) == 'Sun' %}cell-sun{% endif %}">
+                {% set is_sun = day_name_fn(result.year, result.month, day) == 'Sun' %}
+                {% set is_manual = overrides.get(eid, {}).get(day|string) is not none %}
+                {% if role == 'admin' %}
+                <td class="cell-{{ val }} {% if is_sun and val == 'W' %}cell-sun{% endif %} cell-editable {% if is_manual %}cell-manual{% endif %}"
+                    title="{{ info.name }} – Day {{ day }}: {{ val }}{% if is_manual %} (manually set){% endif %}"
+                    onclick="openEditModal('{{ eid }}', {{ day }}, '{{ val }}', '{{ info.name }}')">
                   {{ val }}
                 </td>
+                {% else %}
+                <td class="cell-{{ val }} {% if is_sun and val == 'W' %}cell-sun{% endif %}"
+                    title="{{ info.name }} – Day {{ day }}: {{ val }}">
+                  {{ val }}
+                </td>
+                {% endif %}
               {% endfor %}
             </tr>
             {% endfor %}
@@ -147,5 +171,58 @@
   <span class="badge badge-shift3 px-3 py-2">3 – Night</span>
   <span class="badge badge-woff px-3 py-2">W – Weekly Off</span>
   <span class="badge badge-leave px-3 py-2">L – Leave</span>
+  {% if role == 'admin' %}
+  <span class="badge bg-warning text-dark px-3 py-2" style="font-size:0.7rem; outline:2px solid #e74c3c;">Red border = manually overridden</span>
+  {% endif %}
 </div>
+
+{% if role == 'admin' %}
+<!-- Edit Cell Modal -->
+<div class="modal fade" id="editModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header" style="background:#1F4E79; color:#fff;">
+        <h6 class="modal-title" id="editModalTitle">Edit Cell</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="POST" action="{{ url_for('wizard_override') }}">
+        <div class="modal-body">
+          <input type="hidden" name="emp_id" id="modal_emp_id">
+          <input type="hidden" name="day"    id="modal_day">
+          <label class="form-label fw-semibold">New Assignment</label>
+          <select name="new_val" id="modal_new_val" class="form-select form-select-lg text-center fw-bold">
+            <option value="1">1 – Morning</option>
+            <option value="2">2 – Afternoon</option>
+            <option value="3">3 – Night</option>
+            <option value="W">W – Weekly Off</option>
+            <option value="L">L – Leave</option>
+          </select>
+          <small class="text-muted mt-2 d-block">
+            <i class="bi bi-info-circle"></i> This change is previewed immediately and remembered for future regenerations.
+          </small>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary btn-sm">Save Change</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if role == 'admin' %}
+<script>
+function openEditModal(empId, day, currentVal, empName) {
+  document.getElementById('modal_emp_id').value = empId;
+  document.getElementById('modal_day').value = day;
+  document.getElementById('modal_new_val').value = currentVal;
+  document.getElementById('editModalTitle').textContent =
+    empName + ' — Day ' + day;
+  new bootstrap.Modal(document.getElementById('editModal')).show();
+}
+</script>
+{% endif %}
 {% endblock %}

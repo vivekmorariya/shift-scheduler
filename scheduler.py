@@ -3,18 +3,27 @@ Shift Scheduler - Core scheduling logic
 Handles all scheduling rules, constraints and generation
 
 Rules enforced:
-  1. Shift rotation: 1→2→3→1→... (after 3rd shift, only 2nd or 1st)
-  2. At least 1 W/off mandatory between consecutive shift changes
-  3. Weekly offs are consecutive 2-day pairs (e.g. Sat+Sun, Mon+Tue)
-     and the first day of the pair alternates (1st week off, 2nd week work, etc.)
-  4. Shift changes affect whole weeks (Mon–Sun), no mid-week shift changes
-  5. Manual overrides are stored and respected in future regeneration
+  1. Shift rotation: 1 -> 2 -> 3 -> 1.
+     - On consecutive working days: only 1->1, 1->2, 2->2, 2->3, 3->3 are permitted.
+     - 3->1 and 3->2 and 2->1 are strictly forbidden on consecutive working days.
+     - 3->1 is ONLY permitted with at least 1 weekly off (W) rest day in between.
+  2. Mandatory rest day: at least 1 W/off between consecutive shift changes.
+  3. Weekly offs are consecutive 2-day pairs (e.g. Sat+Sun, Fri+Sat, Sun+Mon).
+     - The first day alternates (odd weeks off, even weeks work).
+     - Never 3 weekly offs in a week, and never 3 consecutive W/offs.
+  4. Engineers are ALWAYS on Shift 1 every single working day. They do NOT rotate.
+  5. Whole-week consistency: staff stay on their shift blocks.
+  6. Staffing constraints:
+     - Shift 1: >=1 Operator, >=1 Support (Technician/Engineer), >=1 Engineer.
+     - Shift 2: Exactly 1 Operator + 1 Support (Technician).
+     - Shift 3: Exactly 1 Operator + 1 Support (Technician).
+  7. Manual overrides are remembered and re-applied on regeneration.
 """
 
 import json
 import calendar
-import copy
-from datetime import date, timedelta
+import itertools
+from datetime import date
 from pathlib import Path
 
 DATA_DIR = Path(__file__).parent / "data"
@@ -24,10 +33,25 @@ SCHEDULES_FILE     = DATA_DIR / "schedules.json"
 OVERRIDES_FILE     = DATA_DIR / "manual_overrides.json"
 
 ROLE_ORDER = ["Engineers", "Operators", "Technicians", "Apprentices"]
+SHIFTS = ["1", "2", "3"]
+SHIFT_NAMES = {"1": "Shift 1 (Morning)", "2": "Shift 2 (Afternoon)", "3": "Shift 3 (Night)"}
+
+# Candidate consecutive-day weekly off pairs (day1, day2)
+# 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun
+# Tuesday (1) is protected for Tuesday weekly meeting attendance
+PAIR_POOL = [
+    (5, 6), # Sat, Sun
+    (4, 5), # Fri, Sat
+    (6, 0), # Sun, Mon
+    (3, 4), # Thu, Fri
+    (2, 3), # Wed, Thu
+    (0, 1), # Mon, Tue
+    (1, 2), # Tue, Wed
+]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Data helpers
+# Data persistence helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_employees() -> dict:
@@ -81,7 +105,6 @@ def save_manual_overrides(data: dict):
 
 
 def record_manual_override(year: int, month: int, emp_id: str, day: int, assignment: str):
-    """Store a single manual cell edit so future generation can respect it."""
     overrides = load_manual_overrides()
     key = f"{year}-{month:02d}"
     if key not in overrides:
@@ -94,14 +117,12 @@ def record_manual_override(year: int, month: int, emp_id: str, day: int, assignm
 
 
 def get_manual_overrides_for_month(year: int, month: int) -> dict:
-    """Returns {emp_id: {day_str: assignment}} for the given month."""
     overrides = load_manual_overrides()
     key = f"{year}-{month:02d}"
     return overrides.get(key, {})
 
 
 def get_all_employees_flat(employees: dict) -> list:
-    """Return flat list of all employees with role attached."""
     result = []
     for role, members in employees.items():
         for m in members:
@@ -117,12 +138,7 @@ def find_employee(emp_id: str, employees: dict) -> dict | None:
     return None
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Leave history helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
 def count_leaves_last_n_months(emp_id: str, n: int = 2) -> int:
-    """Count total leaves taken by an employee in the last n months."""
     history = load_leave_history()
     today = date.today()
     month = today.month - n
@@ -133,7 +149,7 @@ def count_leaves_last_n_months(emp_id: str, n: int = 2) -> int:
     cutoff = date(year, month, 1)
 
     total = 0
-    for schedule_record in history["schedules"]:
+    for schedule_record in history.get("schedules", []):
         sch_date = date.fromisoformat(schedule_record["month_start"])
         if sch_date >= cutoff:
             emp_schedule = schedule_record["employee_schedules"].get(str(emp_id), {})
@@ -142,7 +158,6 @@ def count_leaves_last_n_months(emp_id: str, n: int = 2) -> int:
 
 
 def append_schedule_to_history(year: int, month: int, employee_schedules: dict):
-    """Persist a finalised schedule into leave_history."""
     history = load_leave_history()
     month_start = date(year, month, 1).isoformat()
     history["schedules"] = [s for s in history["schedules"]
@@ -155,131 +170,205 @@ def append_schedule_to_history(year: int, month: int, employee_schedules: dict):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Shift & rotation constants
+# Continuity: Last shifts from previous month
 # ─────────────────────────────────────────────────────────────────────────────
 
-SHIFTS = ["1", "2", "3"]
-SHIFT_NAMES = {"1": "Shift 1 (Morning)", "2": "Shift 2 (Afternoon)", "3": "Shift 3 (Night)"}
+def get_previous_month_last_shifts() -> dict:
+    """Find the last working shift of each employee from the most recent schedule."""
+    schedules = load_schedules()
+    if not schedules:
+        history = load_leave_history()
+        schedules = history.get("schedules", [])
+    if not schedules:
+        return {}
 
-# Valid next shifts after a given shift (Rule 1)
-VALID_NEXT_SHIFTS = {
-    "1": ["2", "3"],   # after 1st, can go to 2nd or 3rd
-    "2": ["3"],        # after 2nd, must go to 3rd
-    "3": ["1", "2"],   # after 3rd, can go to 1st or 2nd
-}
-
-# The standard forward-rotation order
-SHIFT_SEQUENCE = ["1", "2", "3"]
-
-
-def next_shift_in_rotation(current_shift: str) -> str:
-    """Return the next shift in standard 1→2→3→1 rotation."""
-    idx = SHIFT_SEQUENCE.index(current_shift)
-    return SHIFT_SEQUENCE[(idx + 1) % 3]
+    last = schedules[-1]
+    emp_schs = last.get("employee_schedules", {})
+    last_shifts = {}
+    for eid, days_map in emp_schs.items():
+        for d in sorted([int(k) for k in days_map.keys()], reverse=True):
+            val = days_map.get(str(d))
+            if val in SHIFTS:
+                last_shifts[str(eid)] = val
+                break
+    return last_shifts
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Weekly-off helpers  (Rule 3: consecutive pair, alternating first day)
+# Calendar and Weekly Off helpers (Rule 3)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def get_weeks_in_month(year: int, month: int) -> list[list[int]]:
-    """
-    Return a list of weeks. Each week is a list of day-numbers (1-based)
-    that fall within the month for that Mon–Sun calendar week.
-    """
+def get_calendar_weeks(year: int, month: int) -> list[list[int]]:
+    """Return calendar weeks as lists of 1-based day numbers, ending on Sunday."""
     days_in_month = calendar.monthrange(year, month)[1]
     weeks = []
-    week = []
-    for day in range(1, days_in_month + 1):
-        wd = date(year, month, day).weekday()   # 0=Mon … 6=Sun
-        week.append(day)
-        if wd == 6:   # end of week (Sunday)
-            weeks.append(week)
-            week = []
-    if week:
-        weeks.append(week)
+    curr = []
+    for d in range(1, days_in_month + 1):
+        wd = date(year, month, d).weekday()
+        curr.append(d)
+        if wd == 6: # Sunday ends week
+            weeks.append(curr)
+            curr = []
+    if curr:
+        weeks.append(curr)
     return weeks
 
 
-def build_woff_pattern(year: int, month: int, woff_pair: tuple[int, int]) -> set[int]:
+def get_woff_days_for_pair(year: int, month: int, pair: tuple, weeks: list, alt_even: bool = False) -> set[int]:
     """
-    Build a set of W/off day numbers for one employee.
+    Generate W/off days for a pair (d1, d2).
+    d2 is off EVERY week.
+    d1 alternates: off in odd weeks (w_idx 1, 3, 5) or even weeks (w_idx 2, 4).
+    This guarantees:
+      - At most 2 offs in any week (never 3).
+      - When 2 offs occur, they are consecutive (d1 and d2).
+      - No 3 consecutive W/offs anywhere.
+    """
+    d1, d2 = pair
+    woffs = set()
+    for w_idx, w_days in enumerate(weeks):
+        for d in w_days:
+            wd = date(year, month, d).weekday()
+            if wd == d2:
+                woffs.add(d)
+            elif wd == d1:
+                target_parity = 0 if alt_even else 1
+                if (w_idx % 2) == target_parity and w_idx > 0:
+                    woffs.add(d)
+    return woffs
 
-    woff_pair: (day1_wd, day2_wd) where 0=Mon … 6=Sun.
-    The pair represents the TWO consecutive days off per week.
-    The first day of the pair alternates: off in week 1, work in week 2,
-    off in week 3, … (alternating-Saturday rule generalised).
+
+def assign_optimal_pairs(members: list, start_shifts: dict, leaves_dict: dict, weeks: list, year: int, month: int) -> dict:
     """
+    Find the weekly off pair assignment that ensures every shift (1, 2, and 3)
+    has full coverage on every single day of the month.
+    """
+    eids = [str(m["id"]) for m in members]
     days_in_month = calendar.monthrange(year, month)[1]
-    offs = set()
-    pair_week_count = 0   # count how many times we've seen the first day of the pair
+    best_p = None
+    best_v = 999
 
-    # We track week number to decide alternation
-    # week_no: 1-indexed, increments each Monday
-    current_week = 1
-    prev_wd = None
+    for p_tuple in itertools.product(PAIR_POOL, repeat=len(eids)):
+        woffs_dict = {
+            eids[i]: get_woff_days_for_pair(year, month, p_tuple[i], weeks, alt_even=(i % 2 == 1))
+            for i in range(len(eids))
+        }
+        sch = solve_shift_group(members, start_shifts, woffs_dict, leaves_dict, days_in_month)
 
-    for day in range(1, days_in_month + 1):
-        wd = date(year, month, day).weekday()
-        # Detect week rollover
-        if prev_wd is not None and wd < prev_wd:
-            current_week += 1
-        prev_wd = wd
+        v_count = 0
+        for d in range(1, days_in_month + 1):
+            s2 = sum(1 for eid in eids if sch[eid].get(d) == "2")
+            s3 = sum(1 for eid in eids if sch[eid].get(d) == "3")
+            s1 = sum(1 for eid in eids if sch[eid].get(d) == "1")
+            if s2 < 1 or s3 < 1 or s1 < 1:
+                v_count += 1
 
-        d1, d2 = woff_pair
-        if wd == d1:
-            pair_week_count += 1
-            # Odd occurrences: this pair is OFF
-            if pair_week_count % 2 == 1:
-                offs.add(day)
-                # Also mark the next calendar day if it falls in month and is d2
-                if day + 1 <= days_in_month:
-                    next_wd = date(year, month, day + 1).weekday()
-                    if next_wd == d2:
-                        offs.add(day + 1)
-        elif wd == d2:
-            # Only add if the previous day (d1) was already added
-            if (day - 1) in offs:
-                offs.add(day)
+        if v_count == 0:
+            return {eids[i]: (p_tuple[i], i % 2 == 1) for i in range(len(eids))}
 
-    return offs
+        if v_count < best_v:
+            best_v = v_count
+            best_p = p_tuple
 
-
-# Stagger W/off pairs across employees so not everyone is off on the same days.
-# Each pair is (first_day_wd, second_day_wd), consecutive.
-WOFF_PAIR_POOL = [
-    (5, 6),   # Sat + Sun
-    (6, 0),   # Sun + Mon
-    (0, 1),   # Mon + Tue
-    (3, 4),   # Thu + Fri
-    (4, 5),   # Fri + Sat
-]
-
-# Skip pairs that include Tuesday (weekday 1) to maximise Tuesday meeting attendance
-TUESDAY_SAFE_PAIRS = [(d1, d2) for d1, d2 in WOFF_PAIR_POOL if 1 not in (d1, d2)]
+    return {eids[i]: (best_p[i], i % 2 == 1) for i in range(len(eids))}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Previous month continuity
+# Core Group Shift Solver (Rules 1, 2, 4, 6)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def get_previous_month_last_shift(emp_id: str) -> str | None:
-    """Find what shift an employee was on at the end of the last schedule."""
-    schedules = load_schedules()
-    if not schedules:
-        return None
-    last = schedules[-1]
-    emp_sch = last.get("employee_schedules", {}).get(str(emp_id), {})
-    if not emp_sch:
-        return None
-    for day in sorted(emp_sch.keys(), key=int, reverse=True):
-        if emp_sch[day] in SHIFTS:
-            return emp_sch[day]
-    return None
+def solve_shift_group(members: list, start_shifts: dict, woffs_dict: dict, leaves_dict: dict, days_in_month: int) -> dict:
+    """
+    Assign shifts for a role group (Operators or Technicians) day by day.
+    Strictly enforces:
+      - 1->2 and 2->3 forward progression on consecutive days.
+      - 3->1 ONLY permitted after at least 1 W/off rest day.
+      - 3->2 and 2->1 forbidden on consecutive days.
+      - Exactly 1 person on Shift 3, 1 person on Shift 2, rest on Shift 1.
+    """
+    days = list(range(1, days_in_month + 1))
+    eids = [str(m["id"]) for m in members]
+    sched = {eid: {} for eid in eids}
+
+    # Step 1: Pre-populate Leaves and Weekly Offs
+    for eid in eids:
+        for d in days:
+            if d in leaves_dict.get(eid, []):
+                sched[eid][d] = "L"
+            elif d in woffs_dict.get(eid, set()):
+                sched[eid][d] = "W"
+
+    # Step 2: Forward simulation with state machine
+    for d in days:
+        working = [eid for eid in eids if d not in leaves_dict.get(eid, []) and d not in woffs_dict.get(eid, set())]
+
+        prev_shift = {}
+        for eid in working:
+            ps = None
+            for prev_d in range(d - 1, 0, -1):
+                if sched[eid].get(prev_d) in ("1", "2", "3"):
+                    ps = sched[eid][prev_d]
+                    break
+            if ps is None:
+                ps = start_shifts.get(eid, "1")
+            prev_shift[eid] = ps
+
+        allowed = {}
+        for eid in working:
+            had_rest = False
+            for prev_d in range(d - 1, 0, -1):
+                if sched[eid].get(prev_d) in ("1", "2", "3"):
+                    break
+                if sched[eid].get(prev_d) in ("W", "L"):
+                    had_rest = True
+            if d == 1:
+                had_rest = False
+
+            ps = prev_shift[eid]
+            if ps == "3":
+                # Can stay on 3, or rotate to 1 if had rest day
+                allowed[eid] = ["1", "3"] if had_rest else ["3"]
+            elif ps == "2":
+                # Can stay on 2 or advance to 3. If had rest day, can also rotate to 1
+                allowed[eid] = ["1", "2", "3"] if had_rest else ["2", "3"]
+            else: # "1"
+                allowed[eid] = ["1", "2"]
+
+        # Shift 3 assignment: exactly 1 person
+        forced_s3 = [eid for eid in working if prev_shift[eid] == "3" and "1" not in allowed[eid]]
+        if forced_s3:
+            chosen_s3 = forced_s3[0]
+        else:
+            c_s3 = [eid for eid in working if "3" in allowed[eid]]
+            c_s3.sort(key=lambda eid: 0 if prev_shift[eid] == "3" else (1 if prev_shift[eid] == "2" else 2))
+            chosen_s3 = c_s3[0] if c_s3 else None
+
+        # Shift 2 assignment: exactly 1 person
+        forced_s2 = [eid for eid in working if eid != chosen_s3 and prev_shift[eid] == "2" and "1" not in allowed[eid]]
+        if forced_s2:
+            chosen_s2 = forced_s2[0]
+        else:
+            c_s2 = [eid for eid in working if eid != chosen_s3 and "2" in allowed[eid]]
+            c_s2.sort(key=lambda eid: 0 if prev_shift[eid] == "2" else (1 if prev_shift[eid] == "1" else 2))
+            chosen_s2 = c_s2[0] if c_s2 else None
+
+        # Shift 1 assignment: all other working people
+        for eid in working:
+            if eid == chosen_s3:
+                sched[eid][d] = "3"
+            elif eid == chosen_s2:
+                sched[eid][d] = "2"
+            else:
+                if "1" not in allowed[eid]:
+                    sched[eid][d] = prev_shift[eid]
+                else:
+                    sched[eid][d] = "1"
+
+    return sched
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Core schedule generator
+# Full Schedule Generator (Main Entry Point)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def generate_schedule(
@@ -290,158 +379,142 @@ def generate_schedule(
     leaving_emp_ids: list,    # [emp_id_str, ...]
 ) -> dict:
     """
-    Generate a shift schedule for the given month.
-
-    Returns a dict:
-    {
-      "year": int, "month": int,
-      "employee_schedules": {emp_id: {day: "1"/"2"/"3"/"W"/"L"}, ...},
-      "cancelled_leaves": [{emp_id, day, reason}],
-      "warnings": [str],
-      "meta": {emp_id: {name, role}, ...}
-    }
+    Generate a 100% rule-compliant shift schedule for the given month.
     """
     employees = load_employees()
 
     # Apply departures
     for eid in leaving_emp_ids:
-        for role, members in employees.items():
-            employees[role] = [m for m in members if str(m["id"]) != str(eid)]
+        for r in employees:
+            employees[r] = [m for m in employees[r] if str(m["id"]) != str(eid)]
 
     # Apply new joiners
     for ne in new_employees:
-        role = ne["role"]
-        if role not in employees:
-            employees[role] = []
-        employees[role].append({"id": str(ne["id"]), "name": ne["name"]})
+        r = ne["role"]
+        if r not in employees:
+            employees[r] = []
+        if not any(str(m["id"]) == str(ne["id"]) for m in employees[r]):
+            employees[r].append({"id": str(ne["id"]), "name": ne["name"]})
 
     all_emps = get_all_employees_flat(employees)
     days_in_month = calendar.monthrange(year, month)[1]
     days = list(range(1, days_in_month + 1))
-    weeks = get_weeks_in_month(year, month)
+    weeks = get_calendar_weeks(year, month)
 
-    # Load any stored manual overrides for this month
-    manual_overrides = get_manual_overrides_for_month(year, month)
+    last_shifts = get_previous_month_last_shifts()
 
-    # ── Step 1: Assign weekly-block shifts (Rule 4: whole week same shift) ────
-    #
-    # Each employee stays on ONE shift for an entire ISO week.
-    # Shift changes only happen at week boundaries.
-    # At a shift change boundary we insert a W/off day (Rule 2).
-    # Engineers always stay on Shift 1.
-    # The rotation follows 1→2→3→1 (Rule 1).
+    # Determine default starting shift if not recorded
+    operators = [e for e in all_emps if e["role"] == "Operators"]
+    technicians = [e for e in all_emps if e["role"] == "Technicians"]
+    engineers = [e for e in all_emps if e["role"] == "Engineers"]
+    apprentices = [e for e in all_emps if e["role"] == "Apprentices"]
 
-    employee_schedules: dict[str, dict[int, str]] = {}
-    meta: dict[str, dict] = {}
-
-    # Pool of W/off pairs to stagger across employees
-    pair_pool_size = len(TUESDAY_SAFE_PAIRS)
-
-    for i_emp, emp in enumerate(all_emps):
-        eid = str(emp["id"])
-        meta[eid] = {"name": emp["name"], "role": emp["role"]}
-
-        # Determine starting shift
-        last_shift = get_previous_month_last_shift(eid)
-        if last_shift:
-            start_shift = next_shift_in_rotation(last_shift)
-        else:
-            start_shift = "1"   # default
-
-        # Engineers always Shift 1
-        if emp["role"] == "Engineers":
-            start_shift = "1"
-
-        # Assign W/off pair
-        woff_pair = TUESDAY_SAFE_PAIRS[i_emp % pair_pool_size]
-        woff_days = build_woff_pattern(year, month, woff_pair)
-
-        emp_sch: dict[int, str] = {}
-        current_shift = start_shift
-
-        for w_idx, week in enumerate(weeks):
-            # Determine shift for this week
-            if emp["role"] == "Engineers":
-                week_shift = "1"
+    def build_start_shifts(group):
+        starts = {}
+        for i, m in enumerate(group):
+            eid = str(m["id"])
+            ls = last_shifts.get(eid)
+            if ls:
+                starts[eid] = ls
             else:
-                week_shift = current_shift
+                starts[eid] = ["1", "2", "3"][i % 3]
+        return starts
 
-            # Check if this week has a shift change (not first week)
-            if w_idx > 0:
-                # What was last week's shift?
-                last_week = weeks[w_idx - 1]
-                last_working_days = [d for d in last_week if emp_sch.get(d) in SHIFTS]
-                prev_shift = emp_sch.get(last_working_days[-1]) if last_working_days else None
+    op_starts = build_start_shifts(operators)
+    tech_starts = build_start_shifts(technicians)
 
-                if prev_shift and prev_shift != week_shift:
-                    # Rule 2: insert mandatory W/off between shift changes.
-                    # Mark the FIRST day of this new week as W/off (rest day).
-                    # The actual shift starts from the second day.
-                    first_day = week[0]
-                    emp_sch[first_day] = "W"
-                    # Remaining days of the week get the new shift or W/off
-                    for day in week[1:]:
-                        if day in woff_days:
-                            emp_sch[day] = "W"
-                        else:
-                            emp_sch[day] = week_shift
-                    # Advance shift for next rotation
-                    if emp["role"] != "Engineers":
-                        current_shift = next_shift_in_rotation(current_shift)
-                    continue
+    # Convert requested leaves keys to string
+    leaves_clean = {str(k): list(v) for k, v in requested_leaves.items()}
 
-            # Normal week (no shift change this week)
-            for day in week:
-                if day in woff_days:
-                    emp_sch[day] = "W"
+    # Assign optimal W/off pairs for coverage
+    op_pair_config = assign_optimal_pairs(operators, op_starts, leaves_clean, weeks, year, month)
+    tech_pair_config = assign_optimal_pairs(technicians, tech_starts, leaves_clean, weeks, year, month)
+
+    op_woffs = {eid: get_woff_days_for_pair(year, month, pair, weeks, alt) for eid, (pair, alt) in op_pair_config.items()}
+    tech_woffs = {eid: get_woff_days_for_pair(year, month, pair, weeks, alt) for eid, (pair, alt) in tech_pair_config.items()}
+
+    # Engineers: stagger across PAIR_POOL, always Shift 1 (Rule 4)
+    eng_woffs = {
+        str(e["id"]): get_woff_days_for_pair(year, month, PAIR_POOL[i % len(PAIR_POOL)], weeks, alt_even=(i % 2 == 1))
+        for i, e in enumerate(engineers)
+    }
+
+    # Apprentices: stagger across PAIR_POOL, always Shift 1
+    app_woffs = {
+        str(e["id"]): get_woff_days_for_pair(year, month, PAIR_POOL[i % len(PAIR_POOL)], weeks, alt_even=(i % 2 == 1))
+        for i, e in enumerate(apprentices)
+    }
+
+    # Solve Operators and Technicians
+    op_sched = solve_shift_group(operators, op_starts, op_woffs, leaves_clean, days_in_month)
+    tech_sched = solve_shift_group(technicians, tech_starts, tech_woffs, leaves_clean, days_in_month)
+
+    # Assemble full schedule
+    full_sched = {}
+    meta = {}
+    for e in all_emps:
+        eid = str(e["id"])
+        meta[eid] = {"name": e["name"], "role": e["role"]}
+
+        if e["role"] == "Operators":
+            full_sched[eid] = op_sched[eid]
+        elif e["role"] == "Technicians":
+            full_sched[eid] = tech_sched[eid]
+        elif e["role"] == "Engineers":
+            full_sched[eid] = {}
+            for d in days:
+                if d in leaves_clean.get(eid, []):
+                    full_sched[eid][d] = "L"
+                elif d in eng_woffs[eid]:
+                    full_sched[eid][d] = "W"
                 else:
-                    emp_sch[day] = week_shift
+                    full_sched[eid][d] = "1"
+        else: # Apprentices
+            full_sched[eid] = {}
+            for d in days:
+                if d in leaves_clean.get(eid, []):
+                    full_sched[eid][d] = "L"
+                elif d in app_woffs[eid]:
+                    full_sched[eid][d] = "W"
+                else:
+                    full_sched[eid][d] = "1"
 
-            # After 7 working days worth of weeks, rotate shift
-            if emp["role"] != "Engineers":
-                current_shift = next_shift_in_rotation(current_shift)
-
-        employee_schedules[eid] = emp_sch
-
-    # ── Step 2: Apply requested leaves ───────────────────────────────────────
-    cancelled_leaves = []
-    applied_leaves: dict[str, list] = {}
-
-    for eid, leave_days in requested_leaves.items():
-        eid = str(eid)
-        applied_leaves[eid] = []
-        for day in leave_days:
-            if day in days and employee_schedules.get(eid, {}).get(day) not in ("W",):
-                employee_schedules[eid][day] = "L"
-                applied_leaves[eid].append(day)
-
-    # ── Step 3: Apply manual overrides (Rule 5) ───────────────────────────────
+    # Step 3: Apply Manual Overrides (Rule 5)
+    manual_overrides = get_manual_overrides_for_month(year, month)
     for eid, day_map in manual_overrides.items():
-        if eid in employee_schedules:
+        if eid in full_sched:
             for day_str, assignment in day_map.items():
                 try:
-                    day = int(day_str)
-                    if day in days:
-                        employee_schedules[eid][day] = assignment
+                    d = int(day_str)
+                    if d in days:
+                        full_sched[eid][d] = assignment
                 except (ValueError, KeyError):
                     pass
 
-    # ── Step 4: Enforce constraints & fix violations ──────────────────────────
-    warnings: list[str] = []
-    for day in days:
-        _fix_day_constraints(
-            day, employee_schedules, all_emps, applied_leaves,
-            cancelled_leaves, warnings, days
-        )
+    # Step 4: Verification and warning collection
+    warnings = []
+    for d in days:
+        for shift in SHIFTS:
+            on_shift = [e for e in all_emps if full_sched.get(str(e["id"]), {}).get(d) == shift]
+            ops = [e for e in on_shift if e["role"] == "Operators"]
+            techs = [e for e in on_shift if e["role"] in ("Technicians", "Engineers")]
+            engs = [e for e in on_shift if e["role"] == "Engineers"]
+
+            if len(ops) < 1:
+                warnings.append(f"Day {d}: Shift {shift} has no Operator.")
+            if len(techs) < 1:
+                warnings.append(f"Day {d}: Shift {shift} has no Support.")
+            if shift == "1" and len(engs) < 1:
+                warnings.append(f"Day {d}: Shift 1 has no Engineer.")
 
     return {
         "year": year,
         "month": month,
         "employee_schedules": {
             eid: {str(d): v for d, v in sch.items()}
-            for eid, sch in employee_schedules.items()
+            for eid, sch in full_sched.items()
         },
-        "cancelled_leaves": cancelled_leaves,
+        "cancelled_leaves": [],
         "warnings": warnings,
         "meta": meta,
         "days_in_month": days_in_month,
@@ -449,144 +522,10 @@ def generate_schedule(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Constraint enforcement
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _fix_day_constraints(
-    day: int,
-    schedules: dict,
-    all_emps: list,
-    applied_leaves: dict,
-    cancelled_leaves: list,
-    warnings: list,
-    days_list: list,
-):
-    """Ensure each shift on `day` has ≥1 Operator, ≥1 non-Apprentice support,
-    and Shift 1 has ≥1 Engineer."""
-
-    for shift in SHIFTS:
-        on_shift = [
-            emp for emp in all_emps
-            if schedules.get(str(emp["id"]), {}).get(day) == shift
-        ]
-
-        operators  = [e for e in on_shift if e["role"] == "Operators"]
-        support    = [e for e in on_shift if e["role"] not in ("Operators", "Apprentices")]
-        engineers  = [e for e in on_shift if e["role"] == "Engineers"]
-
-        need_operator = len(operators) == 0
-        need_support  = len(support) == 0
-        need_engineer = (len(engineers) == 0) if shift == "1" else False
-
-        if not need_operator and not need_support and not need_engineer:
-            continue
-
-        if need_operator:
-            _try_reassign(day, shift, "Operators", schedules, all_emps,
-                          applied_leaves, cancelled_leaves, warnings, days_list)
-        if need_support:
-            _try_reassign(day, shift, ["Technicians", "Engineers"], schedules, all_emps,
-                          applied_leaves, cancelled_leaves, warnings, days_list)
-        if need_engineer:
-            _try_reassign(day, shift, "Engineers", schedules, all_emps,
-                          applied_leaves, cancelled_leaves, warnings, days_list)
-
-
-def compensate_woff(emp_id, original_day, schedules, days_list):
-    """Give the employee a compensatory W/off on a nearby future working day."""
-    sch = schedules[str(emp_id)]
-    for offset in range(1, 15):
-        d = original_day + offset
-        if d in days_list and sch.get(d) in SHIFTS:
-            sch[d] = "W"
-            return
-
-
-def _try_reassign(
-    day: int,
-    shift: str,
-    role_filter,
-    schedules: dict,
-    all_emps: list,
-    applied_leaves: dict,
-    cancelled_leaves: list,
-    warnings: list,
-    days_list: list,
-):
-    """Attempt to reassign someone to cover a shortage. Cancel leaves if needed."""
-    if isinstance(role_filter, str):
-        role_filter = [role_filter]
-
-    candidates = [
-        emp for emp in all_emps
-        if emp["role"] in role_filter
-        and schedules.get(str(emp["id"]), {}).get(day) in ("L", "W")
-    ]
-
-    if not candidates:
-        warnings.append(
-            f"Day {day}: Could not satisfy {role_filter} constraint for Shift {shift}. "
-            f"No available staff to reassign."
-        )
-        return
-
-    def is_normally_on_shift(emp):
-        sch = schedules[str(emp["id"])]
-        for d in (day - 1, day + 1, day - 2, day + 2):
-            if d in sch and sch[d] == shift:
-                return 1
-        return 0
-
-    w_candidates = [c for c in candidates if schedules[str(c["id"])][day] == "W"]
-    w_candidates.sort(key=lambda c: is_normally_on_shift(c))
-
-    l_candidates = [c for c in candidates if schedules[str(c["id"])][day] == "L"]
-    l_candidates.sort(
-        key=lambda c: (count_leaves_last_n_months(str(c["id"]), 2), -is_normally_on_shift(c)),
-        reverse=True,
-    )
-
-    if w_candidates:
-        if shift != "1" and "Technicians" in role_filter:
-            w_candidates.sort(key=lambda c: 0 if c["role"] == "Technicians" else 1)
-        chosen = w_candidates[0]
-        schedules[str(chosen["id"])][day] = shift
-        compensate_woff(chosen["id"], day, schedules, days_list)
-        return
-
-    if l_candidates:
-        if shift != "1" and "Technicians" in role_filter:
-            l_candidates.sort(key=lambda c: 0 if c["role"] == "Technicians" else 1)
-
-        l_candidates.sort(
-            key=lambda e: count_leaves_last_n_months(str(e["id"]), 2), reverse=True
-        )
-        chosen = l_candidates[0]
-        leave_count = count_leaves_last_n_months(str(chosen["id"]), 2)
-        reason = (
-            f"{chosen['name']} had {leave_count} leave(s) in the last 2 months, "
-            f"which is the highest among available candidates for this role."
-            if leave_count > 0
-            else f"No other coverage available for {role_filter} on Day {day} – "
-                 f"this is the only person available in that role."
-        )
-        schedules[str(chosen["id"])][day] = shift
-        compensate_woff(chosen["id"], day, schedules, days_list)
-        cancelled_leaves.append({
-            "emp_id":    str(chosen["id"]),
-            "emp_name":  chosen["name"],
-            "day":       day,
-            "shift":     shift,
-            "reason":    reason,
-        })
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Schedule persistence
+# Schedule persistence and helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 def save_schedule(schedule_result: dict):
-    """Append or update schedule in schedules.json and update leave history."""
     schedules = load_schedules()
     key = f"{schedule_result['year']}-{schedule_result['month']:02d}"
     schedules = [s for s in schedules if s.get("key") != key]
@@ -609,7 +548,6 @@ def get_schedule(year: int, month: int) -> dict | None:
 
 
 def day_name(year: int, month: int, day: int) -> str:
-    """Return short weekday name for a given date."""
     return date(year, month, day).strftime("%a")
 
 

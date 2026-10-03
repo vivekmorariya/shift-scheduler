@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment
+.env
+env/
+venv/
+.venv/
+
+# User auth credentials (keep passwords off GitHub)
+data/users.json

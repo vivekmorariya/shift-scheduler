@@ -336,16 +336,41 @@ def wizard_step(step):
             wizard["leaves"], wizard["new_employees"],
             wizard["leaving_ids"]
         )
+        overrides = get_manual_overrides_for_month(wizard["year"], wizard["month"])
         return render_template(
             "wizard_step4.html", wizard=wizard,
             result=result,
             month_name=month_name(wizard["month"]),
             role_order=["Engineers", "Operators", "Technicians", "Apprentices"],
             day_name_fn=day_name,
-            user=current_user()
+            user=current_user(),
+            role=session.get("role"),
+            overrides=overrides,
         )
 
     return redirect(url_for("index"))
+
+
+@app.route("/wizard/override", methods=["POST"])
+@require_admin
+def wizard_override():
+    wizard = session.get("wizard")
+    if not wizard:
+        flash("No active wizard session.", "warning")
+        return redirect(url_for("new_schedule"))
+
+    emp_id = request.form.get("emp_id", "").strip()
+    day = request.form.get("day", "").strip()
+    new_val = request.form.get("new_val", "").strip().upper()
+
+    valid_vals = {"1", "2", "3", "W", "L"}
+    if not emp_id or not day.isdigit() or new_val not in valid_vals:
+        flash("Invalid override data.", "danger")
+        return redirect(url_for("wizard_step", step=4))
+
+    record_manual_override(wizard["year"], wizard["month"], emp_id, int(day), new_val)
+    flash(f"Manual edit saved: Employee {emp_id}, Day {day} → {new_val}", "success")
+    return redirect(url_for("wizard_step", step=4))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

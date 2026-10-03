@@ -7,9 +7,14 @@
     <small class="text-muted">Welcome back, <strong>{{ user }}</strong></small>
   </div>
   {% if role == 'admin' %}
-  <a href="{{ url_for('new_schedule') }}" class="btn btn-primary">
-    <i class="bi bi-plus-circle"></i> Generate New Schedule
-  </a>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('manage_users') }}" class="btn btn-outline-primary">
+      <i class="bi bi-people-fill"></i> Manage Users
+    </a>
+    <a href="{{ url_for('new_schedule') }}" class="btn btn-primary">
+      <i class="bi bi-plus-circle"></i> Generate New Schedule
+    </a>
+  </div>
   {% endif %}
 </div>
 
