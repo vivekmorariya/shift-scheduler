@@ -479,6 +479,34 @@ def generate_schedule(
                 else:
                     full_sched[eid][d] = "1"
 
+    # Step 2b: Emergency Support Backup by Engineers (Prioritized for Shift 1 unless extremely necessary)
+    # Engineers are prioritized for Shift 1. But if Shift 2 or Shift 3 lacks support
+    # (e.g. 0 technicians available on that shift due to leaves/offs), an available engineer
+    # steps in to provide coverage, provided Shift 1 still has at least 1 Engineer.
+    for d in days:
+        for target_shift in ("2", "3"):
+            support_count = sum(
+                1 for e in all_emps
+                if e["role"] in ("Technicians", "Engineers") and full_sched[str(e["id"])].get(d) == target_shift
+            )
+            if support_count == 0:
+                available_engs = [
+                    e for e in engineers
+                    if full_sched[str(e["id"])].get(d) == "1"
+                ]
+                if len(available_engs) > 1:  # Maintain at least 1 engineer on Shift 1
+                    for cand in available_engs:
+                        cand_id = str(cand["id"])
+                        prev_d_shift = full_sched[cand_id].get(d - 1) if d > 1 else last_shifts.get(cand_id, "1")
+                        next_d_shift = full_sched[cand_id].get(d + 1) if d < days_in_month else None
+
+                        prev_ok = not (prev_d_shift in ("2", "3") and target_shift < prev_d_shift)
+                        next_ok = not (next_d_shift in ("1", "2") and target_shift > next_d_shift)
+
+                        if prev_ok and next_ok:
+                            full_sched[cand_id][d] = target_shift
+                            break
+
     # Step 3: Apply Manual Overrides (Rule 5)
     manual_overrides = get_manual_overrides_for_month(year, month)
     for eid, day_map in manual_overrides.items():
