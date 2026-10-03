@@ -1,87 +1,128 @@
-# Shift Scheduler
+# 📅 Shift Scheduler
 
-Automated shift scheduling system for your team — accessible from any device on your WiFi network.
+An intelligent, automated shift scheduling web application built with Python and Flask. Designed for factories and 24/7 continuous operations — generates monthly shift rotations automatically while enforcing strict staffing rules, fairness, and leave management.
 
-## Quick Start
+> Developed with ❤️ by **Vivek Morariya**
 
-1. **Double-click** `Start Scheduler.bat` to launch the server
-2. Open a browser and go to `http://localhost:5000` (this PC) or the IP shown in the window (for Android/Manager)
-3. Login and start generating schedules
+---
 
-## Login Credentials
+## ✨ Features
 
-| User    | Username  | Password  | Access                                  |
-|---------|-----------|-----------|------------------------------------------|
-| You (Admin) | `admin` | `admin123` | Full access — generate & manage schedules |
-| Manager | `manager` | `mgr456`  | View schedules + download Excel          |
+### 🔄 Automatic Schedule Generation
+- Generates complete monthly shift schedules with a 4-step wizard
+- Handles new joiners and employees leaving the organisation
+- Remembers the last shift of previous month for seamless continuity
 
-> **Tip:** Change passwords in `app.py` (the `USERS` dict) after setup.
+### 📋 Shift Rotation Rules
+- **Weekly-block rotation:** Each employee stays on the same shift for an entire week (Mon–Sun). No mid-week shift changes
+- **Forward-only rotation:** Shifts rotate 1→2→3→1. After Shift 3, only Shift 1 or 2 is allowed (never backwards)
+- **Engineers always on Shift 1:** Engineers are prioritised for the morning shift at all times and are only moved if absolutely no other option exists
+- **Mandatory rest day:** Whenever a shift changes at a week boundary, the first day of the new week is automatically blocked as a rest (W/off) day
 
-## Files in this Project
+### 📅 Weekly Off Rules
+- Weekly offs are assigned as **consecutive 2-day pairs** (e.g. Sat+Sun, Mon+Tue, Thu+Fri)
+- The first day of each pair **alternates** — off one week, working the next (e.g. 1st Saturday off, 2nd Saturday working)
+- Weekly offs are **staggered** across the workforce so weekends are always adequately staffed
+- Tuesday weekly offs are avoided to maximise attendance for the weekly Shift 1 meeting
+
+### 🏭 Staffing Constraints
+- Every shift must have **at least 1 Operator**
+- Every shift must have **at least 1 support person** (Technician or Engineer)
+- **Shift 1 must always have at least 1 Engineer**
+- If a constraint is violated (e.g. due to leaves), the system automatically pulls in backup coverage
+
+### 🌿 Leave Management
+- Admin can input employee leave requests before generating a schedule
+- The system respects leaves and avoids cancelling them unless absolutely necessary
+- If a leave must be cancelled, the system prioritises cancelling from the employee who has taken the most leaves in the last 2 months
+- All cancellations come with a written justification
+
+### ✏️ Manual Override (Admin)
+- Admins can click any individual cell in a saved schedule to change it (1, 2, 3, W, or L)
+- Overrides are saved permanently in `data/manual_overrides.json`
+- Future schedule regenerations **remember and re-apply** these manual overrides automatically
+- Manually overridden cells are highlighted with a red border on the schedule view
+
+### 👥 Employee Management
+- View all employees grouped by role (Engineers, Operators, Technicians, Apprentices)
+- Change an employee's role instantly with a dropdown (promotion/demotion)
+- Add new joiners and mark leavers through the New Schedule wizard
+
+### 🔐 User Management (Admin)
+- Create new application login accounts with a username, password, and role
+- Two roles: **Admin** (full access) and **Manager** (view & download only)
+- Change any user's password at any time
+- Delete users (cannot delete your own account)
+- All users stored securely in `data/users.json`
+
+### 📊 Dashboard & Reports
+- Dashboard lists all generated schedules
+- View full schedule in a colour-coded table with daily headcount summary
+- Download any schedule as a formatted **Excel file**
+- Accessible from any device on the same network (Android, tablet, laptop)
+
+---
+
+## 🚀 How to Run Locally
+
+1. **Install Dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **Start the Server:**
+   ```bash
+   python app.py
+   ```
+   Or use the included `Start Scheduler.bat` file which also prints your local network URL.
+
+3. **Access the App:**
+   - Open your browser and go to `http://localhost:5000`
+   - Log in with your Admin or Manager credentials.
+
+---
+
+## ☁️ Live Deployment
+
+This app is deployed on **PythonAnywhere** and accessible from anywhere in the world:
+
+🌐 **[vivekmorariya.pythonanywhere.com](http://vivekmorariya.pythonanywhere.com)**
+
+---
+
+## 🛠️ Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Backend | Python 3.10, Flask 3.1 |
+| Frontend | HTML5, Bootstrap 5, Jinja2 |
+| Data Storage | JSON files (no database required) |
+| Export | OpenPyXL (Excel .xlsx) |
+| Hosting | PythonAnywhere (Free tier) |
+
+---
+
+## 📁 Project Structure
 
 ```
-Shift Scheduler/
-├── app.py                  Flask web application
-├── scheduler.py            Core scheduling logic
-├── excel_export.py         Excel (.xlsx) export
-├── Start Scheduler.bat     Double-click to start
-├── templates/              HTML pages
-│   ├── base.html           Layout with nav bar
-│   ├── login.html          Login page
-│   ├── index.html          Dashboard
-│   ├── new_schedule.html   Month picker
-│   ├── wizard_step1.html   New joiners
-│   ├── wizard_step2.html   Leavers
-│   ├── wizard_step3.html   Leave requests
-│   ├── wizard_step4.html   Preview & confirm
-│   ├── view_schedule.html  View saved schedule
-│   └── employees.html      Employee directory
-└── data/
-    ├── employees.json       Employee master list
-    ├── schedules.json       All saved schedules
-    └── leave_history.json   Leave tracking history
+shift-scheduler/
+├── app.py                  # Flask routes and web application
+├── scheduler.py            # Core scheduling engine and all rules
+├── excel_export.py         # Excel file generation
+├── requirements.txt        # Python dependencies
+├── templates/              # HTML templates (Jinja2)
+│   ├── base.html
+│   ├── login.html
+│   ├── index.html
+│   ├── employees.html
+│   ├── manage_users.html
+│   ├── view_schedule.html
+│   ├── wizard_step1–4.html
+│   └── ...
+└── data/                   # JSON data files (auto-created)
+    ├── employees.json      # Employee roster
+    ├── schedules.json      # Generated schedules
+    ├── leave_history.json  # Leave history for fairness tracking
+    ├── users.json          # Application login users
+    └── manual_overrides.json # Saved manual cell edits
 ```
-
-## How to Generate a Monthly Schedule
-
-1. Click **"Generate New Schedule"** on the dashboard
-2. Select the **year and month**
-3. **Step 1 – New Joiners:** Add any new employees (ID, name, role)
-4. **Step 2 – Leavers:** Enter IDs of employees leaving the organisation
-5. **Step 3 – Leave Requests:** Enter Employee ID and days requested off
-6. **Step 4 – Preview:** Review the generated schedule, check warnings, then **Confirm & Save**
-7. **Download Excel** directly from the dashboard or schedule view
-
-## Scheduling Rules Applied
-
-| Rule | Description |
-|------|-------------|
-| Operator coverage | At least 1 Operator in every shift, every day |
-| Support coverage | At least 1 Engineer or Technician per shift (not Apprentices) |
-| Engineer preference | Engineers assigned to Shift 1 (Morning) only unless absolutely needed |
-| Weekly offs | Sundays + alternating Saturdays (1st, 3rd…) off by default |
-| Shift change buffer | Minimum 2 weekly offs between consecutive shift changes |
-| Leave planning | Leaves are honoured; if cancellation needed, employee with most leaves in last 2 months is cancelled first with justification |
-
-## Accessing from Android
-
-1. Make sure your phone is on the **same WiFi** as this PC
-2. Note the IP address shown in the terminal when you start the server (e.g. `10.20.161.68`)
-3. Open Chrome/any browser on your phone and go to: `http://10.20.161.68:5000`
-
-## Leave History
-
-The system automatically tracks leave history across months. When generating a new schedule:
-- If a leave needs to be cancelled to maintain shift coverage, the system checks the last **2 months** of leave history
-- The employee who has taken the **most leaves** gets their leave cancelled first
-- A **justification is shown** on the preview screen and in the saved schedule
-
-## Employee Colours
-
-| Code | Colour | Meaning |
-|------|--------|---------|
-| `1` | 🔵 Light Blue | Morning Shift |
-| `2` | 🟡 Light Yellow | Afternoon Shift |
-| `3` | 🟠 Light Orange | Night Shift |
-| `W` | 🟢 Light Green | Weekly Off |
-| `L` | 🔴 Light Red | Leave |

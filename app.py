@@ -15,7 +15,8 @@ import io
 from scheduler import (
     load_employees, save_employees, get_schedule, save_schedule,
     generate_schedule, find_employee, get_all_employees_flat,
-    month_name, day_name, ROLE_ORDER, load_schedules
+    month_name, day_name, ROLE_ORDER, load_schedules,
+    record_manual_override, get_manual_overrides_for_month
 )
 from excel_export import export_to_excel
 
@@ -26,11 +27,25 @@ app.jinja_env.add_extension("jinja2.ext.do")
 # Add enumerate to Jinja2 globals
 app.jinja_env.globals["enumerate"] = enumerate
 
-# ─── Simple role-based auth (no DB needed) ───────────────────────────────────
-USERS = {
-    "admin": {"password": "admin123", "role": "admin"},    # You (admin)
-    "manager": {"password": "mgr456", "role": "manager"},  # Your manager
-}
+import hashlib
+from pathlib import Path
+
+USERS_FILE = Path(__file__).parent / "data" / "users.json"
+
+def load_users() -> dict:
+    if not USERS_FILE.exists():
+        default = {
+            "admin":   {"password": "admin123", "role": "admin"},
+            "manager": {"password": "mgr456",   "role": "manager"},
+        }
+        USERS_FILE.write_text(json.dumps(default, indent=2))
+        return default
+    with open(USERS_FILE) as f:
+        return json.load(f)
+
+def save_users(data: dict):
+    with open(USERS_FILE, "w") as f:
+        json.dump(data, f, indent=2)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Auth helpers
@@ -57,7 +72,8 @@ def require_admin(f):
     def decorated(*args, **kwargs):
         if not current_user():
             return redirect(url_for("login"))
-        if USERS.get(current_user(), {}).get("role") != "admin":
+        users = load_users()
+        if users.get(current_user(), {}).get("role") != "admin":
             flash("Admin access required.", "danger")
             return redirect(url_for("index"))
         return f(*args, **kwargs)
@@ -73,7 +89,8 @@ def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "").strip()
-        user = USERS.get(username)
+        users = load_users()
+        user = users.get(username)
         if user and user["password"] == password:
             session["user"] = username
             session["role"] = user["role"]
@@ -342,6 +359,7 @@ def view_schedule(year, month):
     if not result:
         flash("Schedule not found.", "warning")
         return redirect(url_for("index"))
+    overrides = get_manual_overrides_for_month(year, month)
     return render_template(
         "view_schedule.html",
         result=result,
@@ -350,7 +368,45 @@ def view_schedule(year, month):
         user=current_user(),
         role=session.get("role"),
         day_name_fn=day_name,
+        overrides=overrides,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Manual override – Admin can click individual cells to change assignment
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route("/schedule/<int:year>/<int:month>/override", methods=["POST"])
+@require_admin
+def manual_override(year, month):
+    """Save a manual cell edit, update the stored schedule, and redirect back."""
+    emp_id   = request.form.get("emp_id", "").strip()
+    day      = request.form.get("day", "").strip()
+    new_val  = request.form.get("new_val", "").strip().upper()
+
+    valid_vals = {"1", "2", "3", "W", "L"}
+    if not emp_id or not day.isdigit() or new_val not in valid_vals:
+        flash("Invalid override data.", "danger")
+        return redirect(url_for("view_schedule", year=year, month=month))
+
+    day = int(day)
+
+    # Persist the override so it survives regeneration (Rule 5 – app learns)
+    record_manual_override(year, month, emp_id, day, new_val)
+
+    # Also patch the live schedule JSON immediately
+    from scheduler import load_schedules, save_schedules
+    schedules = load_schedules()
+    key = f"{year}-{month:02d}"
+    for s in schedules:
+        if s.get("key") == key:
+            emp_sch = s["employee_schedules"].setdefault(emp_id, {})
+            emp_sch[str(day)] = new_val
+            break
+    save_schedules(schedules)
+
+    flash(f"Cell updated: Employee {emp_id}, Day {day} → {new_val}", "success")
+    return redirect(url_for("view_schedule", year=year, month=month))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -416,6 +472,83 @@ def change_role():
         flash("Employee not found.", "danger")
         
     return redirect(url_for("employees"))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# User management (Admin only)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route("/users")
+@require_admin
+def manage_users():
+    users = load_users()
+    return render_template("manage_users.html",
+                           users=users,
+                           user=current_user(),
+                           role=session.get("role"))
+
+@app.route("/users/create", methods=["POST"])
+@require_admin
+def create_user():
+    username = request.form.get("username", "").strip().lower()
+    password = request.form.get("password", "").strip()
+    role     = request.form.get("role", "manager").strip()
+
+    if not username or not password:
+        flash("Username and password are required.", "danger")
+        return redirect(url_for("manage_users"))
+
+    if role not in ("admin", "manager"):
+        flash("Invalid role. Must be admin or manager.", "danger")
+        return redirect(url_for("manage_users"))
+
+    users = load_users()
+    if username in users:
+        flash(f"Username '{username}' already exists.", "warning")
+        return redirect(url_for("manage_users"))
+
+    users[username] = {"password": password, "role": role}
+    save_users(users)
+    flash(f"User '{username}' created successfully as {role}.", "success")
+    return redirect(url_for("manage_users"))
+
+@app.route("/users/delete", methods=["POST"])
+@require_admin
+def delete_user():
+    username = request.form.get("username", "").strip()
+    if username == current_user():
+        flash("You cannot delete your own account!", "danger")
+        return redirect(url_for("manage_users"))
+
+    users = load_users()
+    if username not in users:
+        flash(f"User '{username}' not found.", "warning")
+        return redirect(url_for("manage_users"))
+
+    del users[username]
+    save_users(users)
+    flash(f"User '{username}' deleted.", "success")
+    return redirect(url_for("manage_users"))
+
+@app.route("/users/change-password", methods=["POST"])
+@require_admin
+def change_user_password():
+    username   = request.form.get("username", "").strip()
+    new_password = request.form.get("new_password", "").strip()
+
+    if not username or not new_password:
+        flash("Username and new password are required.", "danger")
+        return redirect(url_for("manage_users"))
+
+    users = load_users()
+    if username not in users:
+        flash(f"User '{username}' not found.", "warning")
+        return redirect(url_for("manage_users"))
+
+    users[username]["password"] = new_password
+    save_users(users)
+    flash(f"Password updated for '{username}'.", "success")
+    return redirect(url_for("manage_users"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

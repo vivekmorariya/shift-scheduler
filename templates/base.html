@@ -73,6 +73,9 @@
           <li class="nav-item">
             <a class="nav-link" href="{{ url_for('new_schedule') }}"><i class="bi bi-plus-circle"></i> New Schedule</a>
           </li>
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('manage_users') }}"><i class="bi bi-person-gear"></i> Users</a>
+          </li>
           {% endif %}
           <li class="nav-item">
             <a class="nav-link" href="{{ url_for('logout') }}"><i class="bi bi-box-arrow-right"></i> Logout ({{ user }})</a>
